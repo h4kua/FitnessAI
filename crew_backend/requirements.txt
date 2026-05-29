@@ -1,0 +1,8 @@
+# Requires Python 3.10–3.13 (CrewAI does not yet support 3.14)
+# Use: python3.11 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+crewai>=1.0.0
+litellm>=1.50.0
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+python-dotenv>=1.0.0
+pydantic>=2.7.0

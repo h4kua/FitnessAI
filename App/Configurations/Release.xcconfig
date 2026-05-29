@@ -1,0 +1,10 @@
+GROK_ENV =
+PRODUCT_NAME = FitnessCoach
+PRODUCT_BUNDLE_IDENTIFIER = com.JuanJavier.fitnesscoach
+SWIFT_VERSION = 5.0
+CURRENT_PROJECT_VERSION = 1
+MARKETING_VERSION = 1.0.0
+API_BASE_URL = https://api.example.com
+ANALYTICS_BASE_URL = https://analytics.example.com
+API_REQUEST_TIMEOUT = 30
+GRAPHQL_ENABLED = 1

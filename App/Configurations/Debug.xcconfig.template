@@ -1,0 +1,20 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Debug.xcconfig.template
+// Copy this file to Debug.xcconfig and fill in your own keys.
+// Debug.xcconfig is in .gitignore — it will never be committed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Groq AI coaching API key — free at https://console.groq.com/keys
+GROK_ENV = YOUR_GROQ_API_KEY_HERE
+
+PRODUCT_NAME = FitnessCoach
+PRODUCT_BUNDLE_IDENTIFIER = com.JuanJavier.fitnesscoach
+SWIFT_VERSION = 5.0
+CURRENT_PROJECT_VERSION = 1
+MARKETING_VERSION = 1.0.0
+LOCALHOST_FALLBACK_HOST = your-mac-name.local
+USE_DEMO_HEALTH_DATA = 0
+API_BASE_URL = http://localhost:PORT
+ANALYTICS_BASE_URL = https://analytics-dev.example.com
+API_REQUEST_TIMEOUT = 30
+GRAPHQL_ENABLED = 0
