@@ -80,8 +80,8 @@ public struct ExercisePoseClassifier: Sendable {
         let rightKneeAngle = angle(at: rightKnee, from: rightHip, to: rightAnkle)
         let avgKneeAngle   = (leftKneeAngle + rightKneeAngle) / 2
 
-        // Squat: both knees significantly bent (<130°), hips below shoulder level
-        guard avgKneeAngle < 130 else { return nil }
+        // Squat: knees bent (<145°). Raised to 145° so partial/warm-up squats are caught.
+        guard avgKneeAngle < 145 else { return nil }
 
         let hipY = (leftHip.y + rightHip.y) / 2
         let ankleY = (leftAnkle.y + rightAnkle.y) / 2

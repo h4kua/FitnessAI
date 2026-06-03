@@ -171,21 +171,27 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
     // MARK: - Private
 
     private func applyAnalysis(_ analysis: ExerciseAnalysis) {
-        let previousExercise = currentExercise
         currentExercise = analysis.detectedExercise
 
-        if previousExercise != analysis.detectedExercise && analysis.detectedExercise != .unknown {
-            repTracker = RepTracker()
+        // Always count reps against the exercise the user explicitly selected.
+        // The pose classifier is used for FORM feedback only — it requires deep
+        // angles to be confident, so it lags behind human perception.
+        // Using selectedExercise means: if you pick Squat and bend your knees,
+        // reps are counted immediately without waiting for the classifier to agree.
+
+        // Augment joint angles with derived metrics needed by RepTracker
+        var augmentedAngles = analysis.jointAngles
+        if selectedExercise == .jumpingJack,
+           let leftAnkle = analysis.poseJointPositions["left_ankle"],
+           let rightAnkle = analysis.poseJointPositions["right_ankle"] {
+            augmentedAngles["ankle_spread"] = abs(leftAnkle.x - rightAnkle.x)
         }
 
         let previousCount = repTracker.count
-        repTracker.update(exercise: analysis.detectedExercise, angles: analysis.jointAngles)
+        repTracker.update(exercise: selectedExercise, angles: augmentedAngles)
         let newCount = repTracker.count
 
-        if newCount > previousCount,
-           analysis.detectedExercise == selectedExercise,
-           analysis.detectedExercise != .unknown,
-           analysis.detectedExercise != .standing {
+        if newCount > previousCount {
             let added = newCount - previousCount
             dailyReps[selectedExercise] = (dailyReps[selectedExercise] ?? 0) + added
         }
@@ -363,14 +369,21 @@ private struct RepTracker {
 
     mutating func update(exercise: DetectedExercise, angles: [String: Double]) {
         switch exercise {
+        // Squat: bottom = 110° (thighs ~parallel), top = 150° (almost straight)
         case .squat:
-            countReps(primaryAngle: averageKnee(angles), bottomThreshold: 100, topThreshold: 155)
+            countReps(primaryAngle: averageKnee(angles), bottomThreshold: 110, topThreshold: 150)
+        // Push-up: bottom = 90° (chest low), top = 150° (almost locked out)
         case .pushUp:
-            countReps(primaryAngle: averageElbow(angles), bottomThreshold: 90, topThreshold: 155)
+            countReps(primaryAngle: averageElbow(angles), bottomThreshold: 90, topThreshold: 150)
+        // Pull-up: bottom = 110° (arms bent, chin over bar), top = 155° (arms extended)
         case .pullUp:
-            countReps(primaryAngle: averageElbow(angles), bottomThreshold: 100, topThreshold: 150)
+            countReps(primaryAngle: averageElbow(angles), bottomThreshold: 110, topThreshold: 155)
+        // Sit-up: bottom = 80° (hip fully compressed), top = 140° (back flat)
         case .sitUp:
-            countReps(primaryAngle: averageHip(angles), bottomThreshold: 90, topThreshold: 150)
+            countReps(primaryAngle: averageHip(angles), bottomThreshold: 80, topThreshold: 140)
+        // Jumping jack: count by ankle spread (hip angle is less reliable here)
+        case .jumpingJack:
+            countReps(primaryAngle: averageAnkleSpread(angles), bottomThreshold: 0.20, topThreshold: 0.08)
         default:
             break
         }
@@ -409,5 +422,12 @@ private struct RepTracker {
         let values = [angles["left_hip"], angles["right_hip"]].compactMap { $0 }
         guard !values.isEmpty else { return nil }
         return values.reduce(0, +) / Double(values.count)
+    }
+
+    // Jumping jack uses ankle horizontal spread (normalised 0–1) instead of an angle.
+    // The "angle" dictionary doesn't contain this directly — we derive it from
+    // a synthetic key injected by the ViewModel's applyAnalysis step.
+    private func averageAnkleSpread(_ angles: [String: Double]) -> Double? {
+        angles["ankle_spread"]
     }
 }

@@ -32,7 +32,7 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
     public init(
         logger: AppLogger,
         groqCoaching: GroqCoachingService? = nil,
-        minimumPoseInterval: TimeInterval = 0.2
+        minimumPoseInterval: TimeInterval = 0.10   // 10 fps — fast enough to catch rep peaks
     ) {
         self.logger = logger
         self.groqCoaching = groqCoaching
@@ -83,23 +83,32 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
             sampleConfidence: meanConf
         )
 
-        // Ask Groq for a coaching cue if confidence is sufficient and no critical issue
-        let groqCue: String?
+        // Coaching cue — rule-based ONLY in the camera hot-path.
+        // Groq requires a network round-trip (8 s timeout) which would freeze
+        // every frame when offline. The rule engine gives immediate, descriptive
+        // cues that work on-device without any internet connection.
+        // Groq is still used in the AI Coach Chat tab for deeper conversations.
+        let finalCue = cueOverride ?? defaultCue(for: exercise)
+
+        // Fire-and-forget Groq refresh (non-blocking) — only when online & no critical feedback.
+        // The cue won't appear in THIS frame but may appear in a future frame if the
+        // cooldown (3 s) and network allow it. This never delays the return value.
         if exerciseConfidence >= 0.55,
            formFeedback == .goodForm || formFeedback == nil,
            let coaching = groqCoaching {
-            groqCue = await coaching.coachingCue(
-                for: exercise,
-                angles: rawAngles,
-                confidence: exerciseConfidence
-            )
-        } else {
-            groqCue = nil
+            Task.detached(priority: .background) {
+                _ = await coaching.coachingCue(
+                    for: exercise,
+                    angles: rawAngles,
+                    confidence: exerciseConfidence
+                )
+                // Result intentionally discarded here — future frames use defaultCue;
+                // the AI Coach Chat tab is the proper surface for Groq responses.
+            }
         }
 
-        let finalCue = cueOverride ?? groqCue ?? defaultCue(for: exercise)
-
-        if meanConf >= 0.8 {
+        // Confidence bands (lowered from 0.8/0.55 → 0.65/0.40 so indoor / dim lighting works)
+        if meanConf >= 0.65 {
             return ExerciseAnalysis(
                 classification: exercise != .unknown ? exercise.rawValue : "Bodyweight Movement",
                 coachingCue: finalCue,
@@ -113,10 +122,10 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
             )
         }
 
-        if meanConf >= 0.55 {
+        if meanConf >= 0.40 {
             return ExerciseAnalysis(
                 classification: exercise != .unknown ? exercise.rawValue : "Bodyweight Movement",
-                coachingCue: cueOverride ?? "Movement is readable. Refine alignment before increasing intensity.",
+                coachingCue: cueOverride ?? finalCue,
                 postureConfidence: meanConf,
                 status: .acceptable,
                 detectedExercise: exercise,
@@ -129,7 +138,7 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
 
         return ExerciseAnalysis(
             classification: nil,
-            coachingCue: "Reposition the camera so your full body is visible.",
+            coachingCue: "Step back so your full body fills the frame.",
             postureConfidence: meanConf,
             status: .needsAttention,
             detectedExercise: .unknown,
@@ -181,8 +190,8 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
             return (.bodyNotVisible, "Step back so your full body is visible in the frame.")
         }
 
-        guard f.minJointConfidence >= 0.4 else {
-            return (.lowConfidence, "Improve lighting or move the camera for a clearer view.")
+        guard f.minJointConfidence >= 0.25 else {
+            return (.lowConfidence, "Improve lighting or move closer to the camera.")
         }
 
         switch exercise {
@@ -320,7 +329,9 @@ public extension VisionExerciseAnalysisService {
                 let rawName = key.rawValue.rawValue
                 let name = Self.visionJointMap[rawName] ?? rawName
                 confidences[name] = Double(point.confidence)
-                if point.confidence > 0.3 {
+                // 0.15 threshold picks up more joints in dim/indoor lighting.
+                // The feature extractor still checks minJointConfidence separately.
+                if point.confidence > 0.15 {
                     positions[name] = PosePoint(x: Double(point.location.x), y: Double(point.location.y))
                 }
             }
