@@ -107,8 +107,15 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
             }
         }
 
-        // Confidence bands (lowered from 0.8/0.55 → 0.65/0.40 so indoor / dim lighting works)
-        if meanConf >= 0.65 {
+        // ── Confidence bands ──────────────────────────────────────────────────
+        // rawPositions is ALWAYS forwarded so the skeleton overlay shows whatever
+        // joints Vision detected, even in dim light.  The user can use the live
+        // skeleton to reposition themselves — hiding it when confidence is low is
+        // counter-productive.
+        //
+        // Bands lowered further (0.65/0.40 → 0.50/0.25) to handle indoor / dim
+        // lighting common on iPhone X-era devices.
+        if meanConf >= 0.50 {
             return ExerciseAnalysis(
                 classification: exercise != .unknown ? exercise.rawValue : "Bodyweight Movement",
                 coachingCue: finalCue,
@@ -122,7 +129,7 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
             )
         }
 
-        if meanConf >= 0.40 {
+        if meanConf >= 0.25 {
             return ExerciseAnalysis(
                 classification: exercise != .unknown ? exercise.rawValue : "Bodyweight Movement",
                 coachingCue: cueOverride ?? finalCue,
@@ -130,12 +137,14 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
                 status: .acceptable,
                 detectedExercise: exercise,
                 jointAngles: rawAngles,
-                poseJointPositions: rawPositions,
+                poseJointPositions: rawPositions,   // show partial skeleton
                 formFeedback: formFeedback ?? .lowConfidence,
                 movementPhase: currentPhase
             )
         }
 
+        // Very low confidence — still pass rawPositions so the skeleton appears
+        // and the user knows to step back / improve lighting.
         return ExerciseAnalysis(
             classification: nil,
             coachingCue: "Step back so your full body fills the frame.",
@@ -143,7 +152,7 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
             status: .needsAttention,
             detectedExercise: .unknown,
             jointAngles: [:],
-            poseJointPositions: [:],
+            poseJointPositions: rawPositions,   // ← was [:]; now always forwarded
             formFeedback: .bodyNotVisible,
             movementPhase: .standing
         )
@@ -302,12 +311,31 @@ public extension VisionExerciseAnalysisService {
             throw AppError.rateLimited("Frame skipped to preserve interactive camera performance.")
         }
 
-        // iPhone captures video in landscape-right natively.
-        // For portrait display we tell Vision the correct exif orientation so
-        // joint coordinates come out right-way-up and left/right consistent.
-        // Front camera: .leftMirrored  (mirrored landscape-left)
-        // Back camera:  .right         (landscape-right, unmirrored)
-        let orientation: CGImagePropertyOrientation = isFrontCamera ? .leftMirrored : .right
+        // ── Orientation detection ──────────────────────────────────────────────
+        // AVCaptureVideoDataOutput behaviour is inconsistent across iOS versions:
+        // • Older iOS / some devices: raw buffer arrives in native LANDSCAPE
+        //   (1920×1080 for .high preset) → we must rotate via Vision orientation hint.
+        // • Newer iOS / some devices: the output connection's videoOrientation=.portrait
+        //   setting causes the buffer to arrive already in PORTRAIT orientation
+        //   (1080×1920) → no rotation needed, just handle mirroring.
+        //
+        // We detect which case we're in by comparing width vs height.
+        let bufferWidth  = CVPixelBufferGetWidth(pixelBuffer)
+        let bufferHeight = CVPixelBufferGetHeight(pixelBuffer)
+        let isLandscapeBuffer = bufferWidth > bufferHeight
+
+        let orientation: CGImagePropertyOrientation
+        if isLandscapeBuffer {
+            // Native landscape buffer — tell Vision to rotate to portrait
+            // Front camera: .leftMirrored (90° CW + horizontal flip)
+            // Back camera:  .right        (90° CW)
+            orientation = isFrontCamera ? .leftMirrored : .right
+        } else {
+            // Buffer is already in portrait orientation
+            // Front camera preview mirrors horizontally → .upMirrored
+            // Back camera is unmirrored           → .up
+            orientation = isFrontCamera ? .upMirrored : .up
+        }
 
         let request = VNDetectHumanBodyPoseRequest()
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
@@ -329,9 +357,9 @@ public extension VisionExerciseAnalysisService {
                 let rawName = key.rawValue.rawValue
                 let name = Self.visionJointMap[rawName] ?? rawName
                 confidences[name] = Double(point.confidence)
-                // 0.15 threshold picks up more joints in dim/indoor lighting.
+                // 0.10 threshold picks up more joints in dim/indoor lighting.
                 // The feature extractor still checks minJointConfidence separately.
-                if point.confidence > 0.15 {
+                if point.confidence > 0.10 {
                     positions[name] = PosePoint(x: Double(point.location.x), y: Double(point.location.y))
                 }
             }

@@ -435,17 +435,19 @@ private struct FullScreenCameraView: View {
 
     var body: some View {
         ZStack {
-            // ── 1. Black base ──
+            // ── 1. Black base (full bleed) ──
             Color.black.ignoresSafeArea()
 
             // ── 2. Camera feed (full bleed) ──
             CameraPreviewView(session: cameraController.session)
                 .ignoresSafeArea()
 
-            // ── 3. Skeleton overlay ──
-            if !cameraController.isPaused,
-               let joints = viewModel.latestAnalysis?.poseJointPositions,
-               !joints.isEmpty {
+            // ── 3. Skeleton overlay (full bleed) ──
+            // Show skeleton whenever ANY joints were detected — this helps the user
+            // frame themselves even when confidence is low.
+            if let joints = viewModel.latestAnalysis?.poseJointPositions,
+               !joints.isEmpty,
+               !cameraController.isPaused {
                 SkeletonOverlayView(joints: joints)
                     .ignoresSafeArea()
             }
@@ -463,117 +465,124 @@ private struct FullScreenCameraView: View {
                 }
             }
 
-            // ── 5. HUD ──
+            // ── 5. HUD overlay ──
+            // The ZStack itself respects safe areas (no .ignoresSafeArea here).
+            // This ensures the top bar sits BELOW the iPhone X notch (44 pt safe area)
+            // and interactive controls land in the easy-thumb zone at the bottom.
             VStack(spacing: 0) {
-                topBar
-                    .padding(.top, 8)
-                compactExercisePicker
-                    .padding(.top, 8)
+                topBar.padding(.top, 6)
                 Spacer()
-                bottomPanel
+                bottomPanel   // exercise picker + flip camera + controls all here
             }
         }
         .preferredColorScheme(.dark)
-        .ignoresSafeArea(edges: .top)
+        // ← intentionally NO .ignoresSafeArea on the ZStack:
+        //   background layers go full-bleed via their own .ignoresSafeArea(),
+        //   while the HUD VStack stays within safe areas so buttons clear the notch.
         .onDisappear {
             cameraController.stop()
             viewModel.resetCameraSession()
         }
     }
 
-    // MARK: Top bar
+    // MARK: - Top bar  (minimal — just close + timer)
+    // Exercise picker and camera-flip moved to the bottom panel so they are
+    // reachable with the thumb on tall devices like iPhone X.
 
     private var topBar: some View {
-        HStack {
-            // Close button
+        HStack(alignment: .center) {
+            // Close — 44×44 pt tap target (HIG minimum)
             Button {
                 dismiss()
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(width: 36, height: 36)
-                    .background(.black.opacity(0.45))
+                    .frame(width: 44, height: 44)
+                    .background(.black.opacity(0.55))
                     .clipShape(Circle())
             }
             .padding(.leading, 16)
 
             Spacer()
 
-            // Exercise label
-            Text(viewModel.selectedExercise.rawValue)
-                .font(.headline.bold())
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14).padding(.vertical, 6)
-                .background(.black.opacity(0.45))
+            // Timer — shown only once session has started
+            if viewModel.sessionElapsedSeconds > 0 {
+                HStack(spacing: 5) {
+                    Image(systemName: "timer").font(.caption2)
+                    Text(viewModel.sessionTimerDisplay)
+                        .font(.caption2.monospacedDigit())
+                }
+                .foregroundStyle(.white.opacity(0.85))
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(.black.opacity(0.55))
                 .clipShape(Capsule())
+            }
 
             Spacer()
-
-            // Flip camera button
-            Button { cameraController.switchCamera() } label: {
-                Image(systemName: "camera.rotate.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 36, height: 36)
-                    .background(.black.opacity(0.45))
-                    .clipShape(Circle())
-            }
-            .disabled(cameraController.state != .configured)
-            .padding(.trailing, 16)
+            // Mirror the width of the close button so the timer stays centred
+            Color.clear.frame(width: 44 + 16, height: 1)
         }
     }
 
-    // MARK: Compact exercise picker
-
-    private var compactExercisePicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(DetectedExercise.trackableExercises, id: \.self) { ex in
-                    Button { viewModel.selectExercise(ex) } label: {
-                        Text(ex.rawValue)
-                            .font(.caption.bold())
-                            .foregroundStyle(viewModel.selectedExercise == ex ? .black : .white)
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                            .background(
-                                viewModel.selectedExercise == ex
-                                    ? FitnessTheme.accent
-                                    : Color.white.opacity(0.18)
-                            )
-                            .clipShape(Capsule())
-                    }
-                }
-            }
-            .padding(.horizontal, 16)
-        }
-    }
-
-    // MARK: Bottom panel
+    // MARK: - Bottom panel
+    // All interactive controls live here so they're in easy thumb reach.
+    //
+    // Layout (top → bottom):
+    //   ① Exercise chips  +  🔄 Flip camera
+    //   ② Phase chip  /  Form chip  /  Rep counter (big)
+    //   ③ Coaching cue text
+    //   ④ [Pause]  [Stop]  [Save☁]
 
     private var bottomPanel: some View {
         VStack(spacing: 0) {
-            // ── Rep count + phase ──
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 6) {
-                    if let phase = viewModel.currentPhase {
-                        phaseChip(phase)
-                    }
-                    if let feedback = viewModel.latestAnalysis?.formFeedback {
-                        formChip(feedback)
-                    }
-                    if viewModel.sessionElapsedSeconds > 0 {
-                        HStack(spacing: 4) {
-                            Image(systemName: "timer").font(.caption2)
-                            Text(viewModel.sessionTimerDisplay).font(.caption2.monospacedDigit())
+
+            // ─── ① Exercise picker row + flip camera ───────────────────────
+            HStack(spacing: 10) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(DetectedExercise.trackableExercises, id: \.self) { ex in
+                            Button { viewModel.selectExercise(ex) } label: {
+                                Text(ex.rawValue)
+                                    .font(.caption.bold())
+                                    .foregroundStyle(viewModel.selectedExercise == ex ? .black : .white)
+                                    .padding(.horizontal, 14).padding(.vertical, 9)
+                                    .background(
+                                        viewModel.selectedExercise == ex
+                                            ? FitnessTheme.accent
+                                            : Color.white.opacity(0.18)
+                                    )
+                                    .clipShape(Capsule())
+                            }
                         }
-                        .foregroundStyle(.white.opacity(0.7))
                     }
+                    .padding(.horizontal, 2)
+                }
+
+                // Flip camera — 48×48 pt for easy tap
+                Button { cameraController.switchCamera() } label: {
+                    Image(systemName: "camera.rotate.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 48, height: 48)
+                        .background(Color.white.opacity(0.18))
+                        .clipShape(Circle())
+                }
+                .disabled(cameraController.state != .configured)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+
+            // ─── ② Phase / form chips + big rep counter ────────────────────
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let phase = viewModel.currentPhase { phaseChip(phase) }
+                    if let fb = viewModel.latestAnalysis?.formFeedback { formChip(fb) }
                 }
                 Spacer()
-                // Big rep counter
                 VStack(alignment: .trailing, spacing: 0) {
                     Text("\(viewModel.repCount)")
-                        .font(.system(size: 80, weight: .black, design: .rounded))
+                        .font(.system(size: 72, weight: .black, design: .rounded))
                         .foregroundStyle(FitnessTheme.accent)
                         .monospacedDigit()
                         .contentTransition(.numericText())
@@ -583,9 +592,9 @@ private struct FullScreenCameraView: View {
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.top, 16)
+            .padding(.top, 10)
 
-            // ── Coaching cue ──
+            // ─── ③ Coaching cue ─────────────────────────────────────────────
             if let cue = viewModel.latestAnalysis?.coachingCue, !cue.isEmpty {
                 Text(cue)
                     .font(.subheadline.bold())
@@ -593,10 +602,10 @@ private struct FullScreenCameraView: View {
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 20)
-                    .padding(.top, 10)
+                    .padding(.top, 8)
             }
 
-            // ── Controls row ──
+            // ─── ④ Controls ─────────────────────────────────────────────────
             HStack(spacing: 12) {
                 // Pause / Resume
                 Button {
@@ -609,9 +618,9 @@ private struct FullScreenCameraView: View {
                     }
                     .font(.subheadline)
                     .foregroundStyle(.black)
-                    .frame(maxWidth: .infinity).frame(height: 44)
+                    .frame(maxWidth: .infinity).frame(height: 50)
                     .background(FitnessTheme.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
 
                 // Stop
@@ -624,16 +633,16 @@ private struct FullScreenCameraView: View {
                     }
                     .font(.subheadline)
                     .foregroundStyle(FitnessTheme.caution)
-                    .frame(maxWidth: .infinity).frame(height: 44)
+                    .frame(maxWidth: .infinity).frame(height: 50)
                     .background(FitnessTheme.caution.opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .stroke(FitnessTheme.caution.opacity(0.4), lineWidth: 1)
                     )
                 }
 
-                // Save (only when reps exist)
+                // Save — only visible when there are reps to save
                 if viewModel.canSaveSession {
                     Button {
                         Task { await viewModel.saveSession() }
@@ -647,21 +656,26 @@ private struct FullScreenCameraView: View {
                                     .foregroundStyle(.black)
                             }
                         }
-                        .frame(width: 44, height: 44)
+                        .frame(width: 50, height: 50)
                         .background(FitnessTheme.accent)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
                     .disabled(viewModel.isSavingSession)
                 }
             }
             .padding(.horizontal, 20)
             .padding(.top, 12)
-            .padding(.bottom, 32)   // accounts for home indicator
+            .padding(.bottom, 20)   // comfortable clearance above home indicator
         }
-        .background(.ultraThinMaterial)
+        // Material background extends into home indicator area for visual continuity
+        .background {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea(edges: .bottom)
+        }
     }
 
-    // MARK: - Bottom panel chips
+    // MARK: - Chip helpers
 
     private func phaseChip(_ phase: MovementPhase) -> some View {
         HStack(spacing: 4) {
@@ -669,8 +683,8 @@ private struct FullScreenCameraView: View {
             Text(phaseLabel(phase)).font(.caption.bold())
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 10).padding(.vertical, 4)
-        .background(phaseColor(phase).opacity(0.75))
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .background(phaseColor(phase).opacity(0.80))
         .clipShape(Capsule())
         .animation(.easeInOut(duration: 0.15), value: phase)
     }
@@ -681,7 +695,7 @@ private struct FullScreenCameraView: View {
             Text(formLabel(feedback)).font(.caption.bold())
         }
         .foregroundStyle(formColor(feedback))
-        .padding(.horizontal, 10).padding(.vertical, 4)
+        .padding(.horizontal, 10).padding(.vertical, 5)
         .background(formColor(feedback).opacity(0.20))
         .clipShape(Capsule())
     }
