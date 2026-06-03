@@ -227,6 +227,21 @@ public final class AuthenticationViewModel: ObservableObject {
         onStateChange?()
     }
 
+    // MARK: - Guest / Skip
+
+    /// Lets the user enter the app without an account.
+    /// All data stays local-only; Firestore writes are skipped automatically
+    /// because there is no authenticated Firebase user.
+    public func continueAsGuest() {
+        let guest = UserProfile(
+            analyticsConsent: false,
+            dailyCalorieGoal: CalorieGoal(activeEnergyGoal: 500),
+            displayName: "Guest"
+        )
+        authenticationState = .signedIn(guest)
+        onStateChange?()
+    }
+
     // MARK: - Navigation helpers
 
     public func switchToSignIn() {

@@ -102,6 +102,9 @@ public struct AuthenticationView: View {
 
             switchModeButton
                 .padding(.top, FitnessSpacing.large)
+
+            skipButton
+                .padding(.top, FitnessSpacing.small)
                 .padding(.bottom, FitnessSpacing.xxLarge)
         }
     }
@@ -702,6 +705,23 @@ public struct AuthenticationView: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .stroke(FitnessTheme.secondaryText.opacity(0.3), lineWidth: 1)
             )
+        }
+        .disabled(viewModel.loadState == .loading)
+    }
+
+    // MARK: - Skip / Guest
+
+    private var skipButton: some View {
+        Button {
+            viewModel.continueAsGuest()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.right.circle")
+                    .font(.caption)
+                Text("Skip for now — explore without account")
+                    .font(FitnessTypography.tiny)
+            }
+            .foregroundStyle(FitnessTheme.secondaryText.opacity(0.6))
         }
         .disabled(viewModel.loadState == .loading)
     }
