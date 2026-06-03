@@ -135,11 +135,12 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
         loadState = .failed(message)
     }
 
-    public func analyze(pixelBuffer: CVPixelBuffer) async {
+    public func analyze(pixelBuffer: CVPixelBuffer, isFrontCamera: Bool = true) async {
         do {
             let analysis = try await exerciseAnalysisProvider.analyze(
                 pixelBuffer: pixelBuffer,
-                capturedAt: Date()
+                capturedAt: Date(),
+                isFrontCamera: isFrontCamera
             )
             applyAnalysis(analysis)
             loadState = .loaded

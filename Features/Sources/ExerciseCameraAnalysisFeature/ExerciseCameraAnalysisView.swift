@@ -279,6 +279,22 @@ public struct ExerciseCameraAnalysisView: View {
                         .background(Color.black)
                         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
 
+                    // Camera flip button — top-right corner
+                    .overlay(alignment: .topTrailing) {
+                        Button {
+                            cameraController.switchCamera()
+                        } label: {
+                            Image(systemName: "camera.rotate.fill")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(10)
+                                .background(.black.opacity(0.45))
+                                .clipShape(Circle())
+                        }
+                        .padding(12)
+                        .disabled(cameraController.state != .configured)
+                    }
+
                     // Phase + rep + timer overlay
                     HStack(alignment: .bottom) {
                         VStack(alignment: .leading, spacing: 4) {
@@ -539,10 +555,11 @@ public struct ExerciseCameraAnalysisView: View {
 
 #if canImport(AVFoundation)
     private func startCameraIfNeeded() async {
-        cameraController.onFrame = { pixelBuffer in
+        cameraController.onFrame = { [cameraController] pixelBuffer in
             let wrappedBuffer = SendablePixelBuffer(pixelBuffer)
+            let isFront = cameraController.isFrontCamera
             Task { @MainActor in
-                await viewModel.analyze(pixelBuffer: wrappedBuffer.value)
+                await viewModel.analyze(pixelBuffer: wrappedBuffer.value, isFrontCamera: isFront)
             }
         }
 

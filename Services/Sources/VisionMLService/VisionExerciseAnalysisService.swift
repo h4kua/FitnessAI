@@ -137,12 +137,15 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
     }
 
 #if canImport(Vision) && canImport(CoreVideo)
+    /// `isFrontCamera` corrects the Vision orientation so joint coordinates are
+    /// right/left consistent regardless of which camera produced the frame.
     public func analyze(
         pixelBuffer: CVPixelBuffer,
-        capturedAt: Date = Date()
+        capturedAt: Date = Date(),
+        isFrontCamera: Bool = true
     ) async throws -> ExerciseAnalysis {
         do {
-            let sample = try await detectPose(in: pixelBuffer, capturedAt: capturedAt)
+            let sample = try await detectPose(in: pixelBuffer, capturedAt: capturedAt, isFrontCamera: isFrontCamera)
             return try await analyze(sample: sample)
         } catch let error as AppError {
             switch error {
@@ -279,14 +282,22 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
 public extension VisionExerciseAnalysisService {
     func detectPose(
         in pixelBuffer: CVPixelBuffer,
-        capturedAt: Date = Date()
+        capturedAt: Date = Date(),
+        isFrontCamera: Bool = true
     ) async throws -> BodyPoseSample {
         guard shouldProcessPoseFrame(capturedAt: capturedAt) else {
             throw AppError.rateLimited("Frame skipped to preserve interactive camera performance.")
         }
 
+        // iPhone captures video in landscape-right natively.
+        // For portrait display we tell Vision the correct exif orientation so
+        // joint coordinates come out right-way-up and left/right consistent.
+        // Front camera: .leftMirrored  (mirrored landscape-left)
+        // Back camera:  .right         (landscape-right, unmirrored)
+        let orientation: CGImagePropertyOrientation = isFrontCamera ? .leftMirrored : .right
+
         let request = VNDetectHumanBodyPoseRequest()
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
 
         do {
             try handler.perform([request])
@@ -300,14 +311,17 @@ public extension VisionExerciseAnalysisService {
             var positions: [String: PosePoint] = [:]
 
             for (key, point) in points {
-                let name = key.rawValue.rawValue
+                // Apple Vision uses verbose internal names (e.g. "left_upLeg_joint").
+                // Map to the short names expected by ExercisePoseClassifier / PoseFeatureExtractor.
+                let rawName = key.rawValue.rawValue
+                let name = Self.visionJointMap[rawName] ?? rawName
                 confidences[name] = Double(point.confidence)
                 if point.confidence > 0.3 {
                     positions[name] = PosePoint(x: Double(point.location.x), y: Double(point.location.y))
                 }
             }
 
-            logger.info("Body pose detected: \(confidences.count) keypoints, \(positions.count) positioned")
+            logger.info("Body pose detected: \(positions.count) joints mapped (of \(confidences.count) raw keypoints)")
             return BodyPoseSample(capturedAt: capturedAt, jointConfidences: confidences, jointPositions: positions)
         } catch {
             logger.error("Vision request failed: \(error.localizedDescription)")
@@ -322,5 +336,38 @@ private extension VisionExerciseAnalysisService {
         guard let last = lastPoseDetectionAt else { return true }
         return capturedAt.timeIntervalSince(last) >= minimumPoseInterval
     }
+
+    // MARK: - Vision → short-name joint map
+    // Apple's VNHumanBodyPoseObservation.JointName.rawValue.rawValue produces
+    // verbose strings like "left_upLeg_joint". The classifier and feature extractor
+    // use short names. This table bridges the gap.
+    static let visionJointMap: [String: String] = [
+        // Head
+        "nose_2_joint":           "nose",
+        "left_eye_2_joint":       "left_eye",
+        "right_eye_2_joint":      "right_eye",
+        "left_ear_2_joint":       "left_ear",
+        "right_ear_2_joint":      "right_ear",
+        "neck_1_joint":           "neck",
+        "root":                   "root",
+        // Shoulders
+        "left_shoulder_1_joint":  "left_shoulder",
+        "right_shoulder_1_joint": "right_shoulder",
+        // Elbows
+        "left_forearm_joint":     "left_elbow",
+        "right_forearm_joint":    "right_elbow",
+        // Wrists
+        "left_hand_1_joint":      "left_wrist",
+        "right_hand_1_joint":     "right_wrist",
+        // Hips
+        "left_upLeg_joint":       "left_hip",
+        "right_upLeg_joint":      "right_hip",
+        // Knees
+        "left_leg_joint":         "left_knee",
+        "right_leg_joint":        "right_knee",
+        // Ankles
+        "left_foot_joint":        "left_ankle",
+        "right_foot_joint":       "right_ankle"
+    ]
 }
 #endif

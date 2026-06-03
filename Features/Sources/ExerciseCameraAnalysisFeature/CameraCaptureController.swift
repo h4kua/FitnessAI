@@ -6,10 +6,7 @@ import Foundation
 
 public struct SendablePixelBuffer: @unchecked Sendable {
     public let value: CVPixelBuffer
-
-    public init(_ value: CVPixelBuffer) {
-        self.value = value
-    }
+    public init(_ value: CVPixelBuffer) { self.value = value }
 }
 
 public final class CameraCaptureController: NSObject, ObservableObject {
@@ -27,15 +24,15 @@ public final class CameraCaptureController: NSObject, ObservableObject {
 
         var errorDescription: String? {
             switch self {
-            case .deviceUnavailable:
-                return "No usable camera was found on this device."
-            case .inputCreationFailed:
-                return "The camera input could not be configured."
+            case .deviceUnavailable:   return "No usable camera was found on this device."
+            case .inputCreationFailed: return "The camera input could not be configured."
             }
         }
     }
 
     @Published public private(set) var state: State = .idle
+    /// True when the front camera is active, false for back camera.
+    @Published public private(set) var isFrontCamera: Bool = true
 
     public let session = AVCaptureSession()
     public var onFrame: ((CVPixelBuffer) -> Void)?
@@ -43,12 +40,13 @@ public final class CameraCaptureController: NSObject, ObservableObject {
     private let output = AVCaptureVideoDataOutput()
     private let outputQueue = DispatchQueue(label: "CameraCaptureController.output", qos: .userInitiated)
     private let sessionQueue = DispatchQueue(label: "CameraCaptureController.session", qos: .userInitiated)
+    private var currentInput: AVCaptureDeviceInput?
     private var isConfigured = false
 
+    // MARK: - Start
+
     public func start() async -> State {
-        if case .configured = state {
-            return state
-        }
+        if case .configured = state { return state }
 
         let authorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
         switch authorizationStatus {
@@ -70,7 +68,7 @@ public final class CameraCaptureController: NSObject, ObservableObject {
         }
 
         do {
-            try await configureSessionIfNeeded()
+            try await configureSessionIfNeeded(position: isFrontCamera ? .front : .back)
             try await startRunningSession()
             state = .configured
         } catch {
@@ -80,17 +78,66 @@ public final class CameraCaptureController: NSObject, ObservableObject {
         return state
     }
 
+    // MARK: - Stop
+
     public func stop() {
         sessionQueue.async { [session] in
-            guard session.isRunning else {
-                return
-            }
-
+            guard session.isRunning else { return }
             session.stopRunning()
         }
     }
 
-    private func configureSessionIfNeeded() async throws {
+    // MARK: - Switch Front ↔ Back
+
+    public func switchCamera() {
+        let newPosition: AVCaptureDevice.Position = isFrontCamera ? .back : .front
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                guard let newDevice = AVCaptureDevice.default(
+                    .builtInWideAngleCamera,
+                    for: .video,
+                    position: newPosition
+                ) else { return }
+
+                let newInput = try AVCaptureDeviceInput(device: newDevice)
+
+                self.session.beginConfiguration()
+                // Remove old input
+                if let oldInput = self.currentInput {
+                    self.session.removeInput(oldInput)
+                }
+                // Add new input
+                guard self.session.canAddInput(newInput) else {
+                    self.session.commitConfiguration()
+                    return
+                }
+                self.session.addInput(newInput)
+                self.currentInput = newInput
+
+                // Update connection mirroring & orientation
+                if let connection = self.output.connection(with: .video) {
+                    if connection.isVideoOrientationSupported {
+                        connection.videoOrientation = .portrait
+                    }
+                    connection.isVideoMirrored = newPosition == .front
+                        && connection.isVideoMirroringSupported
+                }
+
+                self.session.commitConfiguration()
+
+                DispatchQueue.main.async {
+                    self.isFrontCamera = (newPosition == .front)
+                }
+            } catch {
+                self.session.commitConfiguration()
+            }
+        }
+    }
+
+    // MARK: - Private
+
+    private func configureSessionIfNeeded(position: AVCaptureDevice.Position) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             sessionQueue.async { [weak self] in
                 guard let self else {
@@ -98,7 +145,7 @@ public final class CameraCaptureController: NSObject, ObservableObject {
                     return
                 }
 
-                guard self.isConfigured == false else {
+                guard !self.isConfigured else {
                     continuation.resume()
                     return
                 }
@@ -107,8 +154,11 @@ public final class CameraCaptureController: NSObject, ObservableObject {
                     self.session.beginConfiguration()
                     self.session.sessionPreset = .high
 
-                    guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
-                        ?? AVCaptureDevice.default(for: .video)
+                    guard let device = AVCaptureDevice.default(
+                        .builtInWideAngleCamera,
+                        for: .video,
+                        position: position
+                    ) ?? AVCaptureDevice.default(for: .video)
                     else {
                         throw CameraError.deviceUnavailable
                     }
@@ -118,6 +168,7 @@ public final class CameraCaptureController: NSObject, ObservableObject {
                         throw CameraError.inputCreationFailed
                     }
                     self.session.addInput(input)
+                    self.currentInput = input
 
                     self.output.alwaysDiscardsLateVideoFrames = true
                     self.output.videoSettings = [
@@ -153,14 +204,14 @@ public final class CameraCaptureController: NSObject, ObservableObject {
     private func startRunningSession() async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             sessionQueue.async { [session] in
-                if session.isRunning == false {
-                    session.startRunning()
-                }
+                if !session.isRunning { session.startRunning() }
                 continuation.resume()
             }
         }
     }
 }
+
+// MARK: - Sample buffer delegate
 
 extension CameraCaptureController: AVCaptureVideoDataOutputSampleBufferDelegate {
     public func captureOutput(
@@ -168,10 +219,7 @@ extension CameraCaptureController: AVCaptureVideoDataOutputSampleBufferDelegate 
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-            return
-        }
-
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         onFrame?(pixelBuffer)
     }
 }

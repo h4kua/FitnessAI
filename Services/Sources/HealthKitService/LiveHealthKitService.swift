@@ -13,8 +13,12 @@ public actor LiveHealthKitService: HealthDataProviding {
     private let logger: AppLogger
     #if canImport(HealthKit)
     private let healthStore: HKHealthStore
-    private var authorizationTask: Task<HealthAuthorizationStatus, Error>?
     #endif
+
+    // Apple intentionally prevents apps from checking READ-permission status
+    // (only write status is readable via authorizationStatus(for:)).
+    // We store a simple flag the first time the system sheet is shown.
+    private static let authorizedKey = "healthkit.hasAuthorized"
 
     public init(logger: AppLogger) {
         self.logger = logger
@@ -23,97 +27,70 @@ public actor LiveHealthKitService: HealthDataProviding {
         #endif
     }
 
+    // MARK: - Authorization Status
+
     public func authorizationStatus() async -> HealthAuthorizationStatus {
         #if canImport(HealthKit)
-        guard HKHealthStore.isHealthDataAvailable() else {
-            return .unavailable
-        }
-
-        guard let activeEnergyType = activeEnergyType else {
-            return .unavailable
-        }
-
-        let status = healthStore.authorizationStatus(for: activeEnergyType)
-        switch status {
-        case .notDetermined:
-            return .notDetermined
-        case .sharingDenied:
-            return .denied
-        case .sharingAuthorized:
-            return .authorized
-        @unknown default:
-            return .unavailable
-        }
+        guard HKHealthStore.isHealthDataAvailable() else { return .unavailable }
+        // If the user has gone through the auth sheet at least once, treat as authorized.
+        // If they denied, HealthKit silently returns 0 — we cannot distinguish from code.
+        let hasAuthorized = UserDefaults.standard.bool(forKey: Self.authorizedKey)
+        return hasAuthorized ? .authorized : .notDetermined
         #else
         return .unavailable
         #endif
     }
 
+    // MARK: - Request Authorization
+
     public func requestAuthorization() async throws -> HealthAuthorizationStatus {
         #if canImport(HealthKit)
-        if let authorizationTask {
-            return try await authorizationTask.value
+        guard HKHealthStore.isHealthDataAvailable() else {
+            throw AppError.unavailable("Apple Health is not available on this device.")
         }
-
         guard let activeEnergyType = activeEnergyType else {
             throw AppError.invalidConfiguration("Active energy type is not available in HealthKit.")
         }
 
-        let task = Task<HealthAuthorizationStatus, Error> { [healthStore, logger = self.logger] in
-            guard HKHealthStore.isHealthDataAvailable() else {
-                throw AppError.unavailable("Health data is not available on this device.")
-            }
-
-            return try await withCheckedThrowingContinuation { continuation in
-                healthStore.requestAuthorization(toShare: [], read: [activeEnergyType]) { success, error in
-                    if let error {
-                        logger.error("HealthKit authorization failed: \(error.localizedDescription)")
-                        continuation.resume(
-                            throwing: AppError.authorizationDenied(
-                                "Apple Health access was declined or is unavailable on this build."
-                            )
+        return try await withCheckedThrowingContinuation { continuation in
+            healthStore.requestAuthorization(toShare: [], read: [activeEnergyType]) { [logger] success, error in
+                if let error {
+                    logger.error("HealthKit authorization error: \(error.localizedDescription)")
+                    continuation.resume(
+                        throwing: AppError.authorizationDenied(
+                            "Apple Health access was declined. Check Settings → Privacy & Security → Health."
                         )
-                        return
-                    }
-
-                    continuation.resume(returning: success ? .authorized : .denied)
+                    )
+                    return
                 }
+                // `success` means the system processed the request (not that the user said yes).
+                // Mark as authorized so we don't show the prompt again; 0 data = user denied.
+                UserDefaults.standard.set(true, forKey: Self.authorizedKey)
+                logger.info("HealthKit authorization sheet completed (success=\(success))")
+                continuation.resume(returning: .authorized)
             }
-        }
-
-        authorizationTask = task
-        defer { authorizationTask = nil }
-        do {
-            return try await task.value
-        } catch let error as AppError {
-            throw error
-        } catch {
-            throw AppError.authorizationDenied("Apple Health access was declined or is unavailable on this build.")
         }
         #else
-        throw AppError.authorizationDenied("Apple Health access was declined or is unavailable on this build.")
+        throw AppError.authorizationDenied("Apple Health is not available on this platform.")
         #endif
     }
+
+    // MARK: - Calorie Summary
 
     public func calorieSummary(for date: Date, goal: CalorieGoal) async throws -> CalorieSummary {
         #if canImport(HealthKit)
         guard HKHealthStore.isHealthDataAvailable() else {
-            throw AppError.authorizationDenied("Apple Health access was declined or is unavailable on this build.")
+            throw AppError.unavailable("Apple Health is not available on this device.")
         }
-
-        try await ensureReadAuthorization()
-
         let activeEnergy = try await activeEnergyBurned(for: date)
-        return CalorieSummary(
-            date: date,
-            activeEnergyBurned: activeEnergy,
-            goal: goal
-        )
+        return CalorieSummary(date: date, activeEnergyBurned: activeEnergy, goal: goal)
         #else
-        throw AppError.authorizationDenied("Apple Health access was declined or is unavailable on this build.")
+        throw AppError.unavailable("Apple Health is not available on this platform.")
         #endif
     }
 }
+
+// MARK: - Private helpers
 
 #if canImport(HealthKit)
 private extension LiveHealthKitService {
@@ -121,26 +98,9 @@ private extension LiveHealthKitService {
         HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)
     }
 
-    func ensureReadAuthorization() async throws {
-        let status = await authorizationStatus()
-        switch status {
-        case .authorized:
-            return
-        case .notDetermined:
-            let updatedStatus = try await requestAuthorization()
-            guard updatedStatus == .authorized else {
-                throw AppError.authorizationDenied("Apple Health access was declined. Enable permissions in Settings to read active energy.")
-            }
-        case .denied:
-            throw AppError.authorizationDenied("Apple Health access was declined. Enable permissions in Settings to read active energy.")
-        case .unavailable:
-            throw AppError.authorizationDenied("Apple Health access was declined or is unavailable on this build.")
-        }
-    }
-
     func activeEnergyBurned(for date: Date) async throws -> Double {
         guard let activeEnergyType else {
-            throw AppError.invalidConfiguration("Active energy type is not available in HealthKit.")
+            throw AppError.invalidConfiguration("Active energy type is not available.")
         }
 
         let calendar = Calendar.current
@@ -159,11 +119,9 @@ private extension LiveHealthKitService {
                     continuation.resume(throwing: error)
                     return
                 }
-
-                let kilocalories = result?.sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0
-                continuation.resume(returning: kilocalories)
+                let kcal = result?.sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0
+                continuation.resume(returning: kcal)
             }
-
             healthStore.execute(query)
         }
     }
