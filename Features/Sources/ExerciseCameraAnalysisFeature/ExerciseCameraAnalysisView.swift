@@ -6,11 +6,14 @@ import DesignSystem
 #endif
 import SwiftUI
 
+// MARK: - Main hub view
+
 public struct ExerciseCameraAnalysisView: View {
     @ObservedObject private var viewModel: ExerciseCameraAnalysisViewModel
 #if canImport(AVFoundation)
     @StateObject private var cameraController = CameraCaptureController()
 #endif
+    @State private var isFullScreen = false
 
     public init(viewModel: ExerciseCameraAnalysisViewModel) {
         _viewModel = ObservedObject(wrappedValue: viewModel)
@@ -18,9 +21,9 @@ public struct ExerciseCameraAnalysisView: View {
 
     public var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: FitnessSpacing.xLarge) {
-                    header
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: FitnessSpacing.large) {
+                    pageHeader
                     exercisePicker
                     repCounterCard
 
@@ -28,76 +31,64 @@ public struct ExerciseCameraAnalysisView: View {
                         dailySummaryCard
                     }
 
-                    cameraSetupCard
-
 #if targetEnvironment(simulator)
                     simulatorCard
-#else
-                    liveCameraCard
-#endif
-
-                    switch viewModel.loadState {
-                    case .idle:
-                        ScreenStateCard(
-                            title: "Ready to analyze",
-                            message: "Select an exercise above, then tap the button to start.",
-                            imageSystemName: "figure.strengthtraining.functional",
-                            actionTitle: actionTitle,
-                            onAction: runAnalysis
-                        )
-                    case .loading:
-                        ScreenStateCard(
-                            title: "Analyzing movement",
-                            message: "Reviewing posture and preparing a coaching cue.",
-                            imageSystemName: "waveform.path.ecg"
-                        )
-                    case .failed(let message):
-                        ScreenStateCard(
-                            title: "Analysis interrupted",
-                            message: message,
-                            imageSystemName: "camera.metering.unknown",
-                            actionTitle: "Try Again",
-                            onAction: runAnalysis
-                        )
-                    case .loaded:
-                        if let analysis = viewModel.latestAnalysis {
-                            analysisResultCard(analysis: analysis)
-                        }
+                    if case .loaded = viewModel.loadState,
+                       let analysis = viewModel.latestAnalysis {
+                        analysisResultCard(analysis: analysis)
                     }
+#else
+                    cameraLaunchCard
+#endif
                 }
-                .padding(FitnessSpacing.large)
+                .padding(.horizontal, FitnessSpacing.large)
+                .padding(.bottom, FitnessSpacing.xxLarge)
             }
             .background(FitnessTheme.background.ignoresSafeArea())
-            .scrollIndicators(.hidden)
-            .navigationTitle("Form Feedback")
+            .navigationBarHidden(true)
             .overlay(alignment: .bottom) {
-                if let msg = viewModel.sessionSavedMessage {
-                    savedToast(msg)
-                }
+                if let msg = viewModel.sessionSavedMessage { savedToast(msg) }
             }
-#if canImport(AVFoundation)
-            .onDisappear {
-                cameraController.stop()
+#if !targetEnvironment(simulator) && canImport(AVFoundation)
+            .fullScreenCover(isPresented: $isFullScreen) {
+                FullScreenCameraView(viewModel: viewModel, cameraController: cameraController)
+            }
+            .onChange(of: isFullScreen) { showing in
+                if showing { Task { await launchCamera() } }
             }
 #endif
         }
     }
 
-    // MARK: - Header
+    // MARK: - Page header
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: FitnessSpacing.small) {
-            MetricBadge(systemImage: "camera.aperture", text: "Live form coaching")
+    private var pageHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                MetricBadge(systemImage: "camera.aperture", text: "On-device AI")
+                Spacer()
+                if viewModel.sessionElapsedSeconds > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "timer").font(.caption2)
+                        Text(viewModel.sessionTimerDisplay).font(.caption2.monospacedDigit())
+                    }
+                    .foregroundStyle(FitnessTheme.accent)
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(FitnessTheme.accent.opacity(0.12))
+                    .clipShape(Capsule())
+                }
+            }
             Text("Exercise Form")
                 .font(FitnessTypography.hero)
                 .foregroundStyle(FitnessTheme.primaryText)
-            Text("Real-time posture feedback and rep counting.")
+            Text("Real-time posture feedback & rep counting — works fully offline.")
                 .font(FitnessTypography.body)
                 .foregroundStyle(FitnessTheme.secondaryText)
         }
+        .padding(.top, FitnessSpacing.medium)
     }
 
-    // MARK: - Exercise Picker
+    // MARK: - Exercise picker
 
     private var exercisePicker: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -112,26 +103,18 @@ public struct ExerciseCameraAnalysisView: View {
     }
 
     private func exerciseChip(_ exercise: DetectedExercise) -> some View {
-        Button {
-            viewModel.selectExercise(exercise)
-        } label: {
+        Button { viewModel.selectExercise(exercise) } label: {
             Text(exercise.rawValue)
                 .font(FitnessTypography.caption)
-                .foregroundStyle(
-                    viewModel.selectedExercise == exercise ? .black : FitnessTheme.primaryText
-                )
+                .foregroundStyle(viewModel.selectedExercise == exercise ? .black : FitnessTheme.primaryText)
                 .padding(.horizontal, FitnessSpacing.medium)
                 .padding(.vertical, FitnessSpacing.small)
-                .background(
-                    viewModel.selectedExercise == exercise
-                        ? FitnessTheme.accent
-                        : FitnessTheme.surface
-                )
+                .background(viewModel.selectedExercise == exercise ? FitnessTheme.accent : FitnessTheme.surface)
                 .clipShape(Capsule())
         }
     }
 
-    // MARK: - Rep Counter Card
+    // MARK: - Rep counter card
 
     private var repCounterCard: some View {
         FitnessCard {
@@ -140,58 +123,32 @@ public struct ExerciseCameraAnalysisView: View {
                     Text(viewModel.selectedExercise.rawValue)
                         .font(FitnessTypography.sectionTitle)
                         .foregroundStyle(FitnessTheme.primaryText)
-
-                    // Timer + session reps label row
-                    HStack(spacing: FitnessSpacing.small) {
-                        Text("Session reps")
-                            .font(FitnessTypography.caption)
-                            .foregroundStyle(FitnessTheme.secondaryText)
-                        if viewModel.sessionElapsedSeconds > 0 {
-                            Spacer()
-                            HStack(spacing: 3) {
-                                Image(systemName: "timer")
-                                    .font(.caption2)
-                                Text(viewModel.sessionTimerDisplay)
-                                    .font(.caption2.monospacedDigit())
-                            }
-                            .foregroundStyle(FitnessTheme.accent)
-                        }
-                    }
-
-                    // Movement phase badge
-                    if let phase = viewModel.currentPhase {
-                        phaseBadge(phase)
-                    }
+                    Text("Session reps")
+                        .font(FitnessTypography.caption)
+                        .foregroundStyle(FitnessTheme.secondaryText)
+                    if let phase = viewModel.currentPhase { phaseBadge(phase) }
                 }
-
                 Spacer()
-
                 Text("\(viewModel.repCount)")
                     .font(FitnessTypography.metric)
                     .foregroundStyle(FitnessTheme.accent)
                     .monospacedDigit()
                     .contentTransition(.numericText())
-
-                Button {
-                    viewModel.resetRepCount()
-                } label: {
+                Button { viewModel.resetRepCount() } label: {
                     Image(systemName: "arrow.counterclockwise")
-                        .font(.body)
-                        .foregroundStyle(FitnessTheme.secondaryText)
+                        .font(.body).foregroundStyle(FitnessTheme.secondaryText)
                 }
             }
         }
     }
 
-    // MARK: - Daily Summary Card
+    // MARK: - Daily summary card
 
     private var dailySummaryCard: some View {
         FitnessCard(title: "Today") {
             VStack(alignment: .leading, spacing: FitnessSpacing.medium) {
-                LazyVGrid(
-                    columns: [GridItem(.flexible()), GridItem(.flexible())],
-                    spacing: FitnessSpacing.small
-                ) {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())],
+                          spacing: FitnessSpacing.small) {
                     ForEach(DetectedExercise.trackableExercises.filter {
                         (viewModel.dailyReps[$0] ?? 0) > 0
                     }, id: \.self) { exercise in
@@ -201,21 +158,17 @@ public struct ExerciseCameraAnalysisView: View {
                                 .foregroundStyle(FitnessTheme.secondaryText)
                             Spacer()
                             Text("\(viewModel.dailyReps[exercise] ?? 0) reps")
-                                .font(FitnessTypography.caption)
+                                .font(FitnessTypography.caption.bold())
                                 .foregroundStyle(FitnessTheme.primaryText)
                         }
                     }
                 }
-
-                // ── Saran 3: Save to Firestore button ──
                 Button {
                     Task { await viewModel.saveSession() }
                 } label: {
                     HStack {
                         if viewModel.isSavingSession {
-                            ProgressView()
-                                .tint(.black)
-                                .scaleEffect(0.8)
+                            ProgressView().tint(.black).scaleEffect(0.8)
                         } else {
                             Image(systemName: "icloud.and.arrow.up")
                         }
@@ -228,29 +181,75 @@ public struct ExerciseCameraAnalysisView: View {
         }
     }
 
-    // MARK: - Camera Setup Card
+    // MARK: - Camera launch card (real device only)
 
-    private var cameraSetupCard: some View {
-        FitnessCard {
-            VStack(alignment: .leading, spacing: FitnessSpacing.medium) {
-                MetricBadge(systemImage: "viewfinder.circle", text: "Setup tips")
-                Text("Place your full body in frame, keep the device stable at chest height.")
-                    .font(FitnessTypography.body)
-                    .foregroundStyle(FitnessTheme.secondaryText)
+#if !targetEnvironment(simulator)
+    private var cameraLaunchCard: some View {
+        GradientCard(gradient: LinearGradient(
+            colors: [Color(red: 0.05, green: 0.05, blue: 0.12),
+                     Color(red: 0.08, green: 0.14, blue: 0.24)],
+            startPoint: .topLeading, endPoint: .bottomTrailing
+        )) {
+            VStack(spacing: FitnessSpacing.large) {
+                HStack(spacing: FitnessSpacing.medium) {
+                    ZStack {
+                        Circle()
+                            .fill(FitnessTheme.accent.opacity(0.18))
+                            .frame(width: 56, height: 56)
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(FitnessTheme.accent)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Live Camera")
+                            .font(FitnessTypography.sectionTitle)
+                            .foregroundStyle(.white)
+                        Text("On-device Vision — no internet needed")
+                            .font(FitnessTypography.caption)
+                            .foregroundStyle(.white.opacity(0.65))
+                    }
+                    Spacer()
+                }
 
+                // Feature pills
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: FitnessSpacing.small) {
-                        MetricBadge(systemImage: "camera.fill",          text: "Full body")
-                        MetricBadge(systemImage: "figure.mind.and.body", text: "On-device")
-                        MetricBadge(systemImage: "brain",                text: "Groq AI",
-                                    tint: FitnessTheme.caution)
+                        featurePill(icon: "figure.mind.and.body", text: "Skeleton")
+                        featurePill(icon: "repeat",               text: "Rep Count")
+                        featurePill(icon: "checkmark.seal",       text: "Form Check")
+                        featurePill(icon: "wifi.slash",           text: "Offline")
                     }
                 }
+
+                Button {
+                    isFullScreen = true
+                } label: {
+                    HStack {
+                        Image(systemName: "camera.fill")
+                        Text("Start Camera")
+                            .fontWeight(.bold)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                }
+                .buttonStyle(PrimaryActionButtonStyle())
             }
         }
     }
 
-    // MARK: - Simulator Card
+    private func featurePill(icon: String, text: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon).font(.caption2)
+            Text(text).font(FitnessTypography.tiny)
+        }
+        .foregroundStyle(.white.opacity(0.75))
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .background(.white.opacity(0.10))
+        .clipShape(Capsule())
+    }
+#endif
+
+    // MARK: - Simulator card
 
 #if targetEnvironment(simulator)
     private var simulatorCard: some View {
@@ -259,446 +258,487 @@ public struct ExerciseCameraAnalysisView: View {
                 Text("Live camera is unavailable in the Simulator. Tap below to analyze a sample \(viewModel.selectedExercise.rawValue) pose.")
                     .font(FitnessTypography.body)
                     .foregroundStyle(FitnessTheme.secondaryText)
-                Button(actionTitle, action: runAnalysis)
-                    .buttonStyle(PrimaryActionButtonStyle())
+                Button("Analyze \(viewModel.selectedExercise.rawValue)") {
+                    Task { await viewModel.runPreviewAnalysis() }
+                }
+                .buttonStyle(PrimaryActionButtonStyle())
             }
         }
     }
 #endif
 
-    // MARK: - Live Camera Card
+    // MARK: - Shared sub-views
 
-#if !targetEnvironment(simulator)
-    private var liveCameraCard: some View {
-        FitnessCard(title: "Live Camera") {
-            VStack(alignment: .leading, spacing: FitnessSpacing.medium) {
-#if canImport(AVFoundation)
-                // ── Camera preview + skeleton + overlays ──
-                ZStack(alignment: .bottom) {
-                    // 1. Video feed
-                    CameraPreviewView(session: cameraController.session)
-                        .frame(height: 340)
-                        .background(Color.black)
-                        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-
-                        // 2. Ridge-skeleton overlay
-                        .overlay(
-                            Group {
-                                if cameraController.state == .configured,
-                                   let joints = viewModel.latestAnalysis?.poseJointPositions,
-                                   !joints.isEmpty,
-                                   !cameraController.isPaused {
-                                    SkeletonOverlayView(joints: joints)
-                                }
-                            }
-                            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                        )
-
-                        // 3. Pause dim overlay
-                        .overlay(
-                            Group {
-                                if cameraController.isPaused {
-                                    ZStack {
-                                        Color.black.opacity(0.55)
-                                        VStack(spacing: 8) {
-                                            Image(systemName: "pause.circle.fill")
-                                                .font(.system(size: 52))
-                                                .foregroundStyle(.white.opacity(0.9))
-                                            Text("Paused")
-                                                .font(FitnessTypography.sectionTitle)
-                                                .foregroundStyle(.white)
-                                        }
-                                    }
-                                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                                }
-                            }
-                        )
-
-                        // 4. Camera-flip button — top-right
-                        .overlay(alignment: .topTrailing) {
-                            Button { cameraController.switchCamera() } label: {
-                                Image(systemName: "camera.rotate.fill")
-                                    .font(.system(size: 20, weight: .semibold))
-                                    .foregroundStyle(.white)
-                                    .padding(10)
-                                    .background(.black.opacity(0.45))
-                                    .clipShape(Circle())
-                            }
-                            .padding(12)
-                            .disabled(cameraController.state != .configured)
-                        }
-
-                    // 5. Info bar — bottom
-                    HStack(alignment: .bottom) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            if viewModel.currentExercise != .unknown {
-                                Text(viewModel.currentExercise.rawValue)
-                                    .font(FitnessTypography.sectionTitle)
-                                    .foregroundStyle(.white)
-                            }
-                            if let phase = viewModel.currentPhase {
-                                phaseOverlayBadge(phase)
-                            }
-                            if viewModel.sessionElapsedSeconds > 0 {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "timer").font(.caption2)
-                                    Text(viewModel.sessionTimerDisplay).font(.caption2.monospacedDigit())
-                                }
-                                .foregroundStyle(.white.opacity(0.8))
-                            }
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 4) {
-                            Text("\(viewModel.repCount)")
-                                .font(FitnessTypography.sectionTitle)
-                                .foregroundStyle(.white)
-                                .monospacedDigit()
-                                .contentTransition(.numericText())
-                            Text("reps")
-                                .font(FitnessTypography.caption)
-                                .foregroundStyle(.white.opacity(0.7))
-                        }
-                    }
-                    .padding(FitnessSpacing.medium)
-                    .background(.black.opacity(0.6))
-                    .clipShape(BottomRoundedShape(radius: 24))
-                }
-
-                Text(cameraController.isPaused
-                     ? "Session paused — tap Resume to continue."
-                     : viewModel.cameraMessage)
-                    .font(FitnessTypography.body)
-                    .foregroundStyle(FitnessTheme.secondaryText)
-
-                // ── Session controls ──
-                if cameraController.state == .configured {
-                    HStack(spacing: FitnessSpacing.small) {
-                        // Pause / Resume
-                        Button {
-                            if cameraController.isPaused {
-                                cameraController.resume()
-                            } else {
-                                cameraController.pause()
-                            }
-                        } label: {
-                            Label(
-                                cameraController.isPaused ? "Resume" : "Pause",
-                                systemImage: cameraController.isPaused ? "play.fill" : "pause.fill"
-                            )
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 48)
-                        }
-                        .buttonStyle(PrimaryActionButtonStyle())
-
-                        // Stop
-                        Button {
-                            cameraController.stop()
-                            viewModel.resetCameraSession()
-                        } label: {
-                            Label("Stop", systemImage: "stop.fill")
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 48)
-                                .background(FitnessTheme.surface)
-                                .foregroundStyle(FitnessTheme.caution)
-                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .stroke(FitnessTheme.caution.opacity(0.4), lineWidth: 1.5)
-                                )
-                        }
-                    }
-                } else {
-                    Button("Start Live Camera", action: runAnalysis)
-                        .buttonStyle(PrimaryActionButtonStyle())
-                }
-#endif
-            }
-        }
-    }
-#endif
-
-    // MARK: - Analysis Result Card
-
-    private func analysisResultCard(analysis: ExerciseAnalysis) -> some View {
-        FitnessCard {
-            VStack(alignment: .leading, spacing: FitnessSpacing.medium) {
-                // Status + confidence
-                HStack {
-                    MetricBadge(
-                        systemImage: statusIcon(for: analysis.status),
-                        text: statusTitle(for: analysis.status),
-                        tint: statusTint(for: analysis.status)
-                    )
-                    Spacer()
-                    Text("\(Int(analysis.postureConfidence * 100))% confidence")
-                        .font(FitnessTypography.caption)
-                        .foregroundStyle(FitnessTheme.secondaryText)
-                }
-
-                // ── Saran 2: Form feedback chip ──
-                if let feedback = analysis.formFeedback {
-                    formFeedbackChip(feedback)
-                }
-
-                // Coaching cue
-                Text(analysis.coachingCue)
-                    .font(FitnessTypography.sectionTitle)
-                    .foregroundStyle(FitnessTheme.primaryText)
-
-                if let classification = analysis.classification {
-                    Text("Detected: \(classification)")
-                        .font(FitnessTypography.body)
-                        .foregroundStyle(FitnessTheme.secondaryText)
-                }
-
-                // ── Saran 1: Phase row in result ──
-                if let phase = analysis.movementPhase, phase != .standing {
-                    phaseBadge(phase)
-                }
-
-                // Joint angles grid
-                if !analysis.jointAngles.isEmpty {
-                    LazyVGrid(
-                        columns: [GridItem(.flexible()), GridItem(.flexible())],
-                        spacing: FitnessSpacing.small
-                    ) {
-                        ForEach(analysis.jointAngles.sorted { $0.key < $1.key }, id: \.key) { key, value in
-                            MetricBadge(
-                                systemImage: "angle",
-                                text: "\(key.replacingOccurrences(of: "_", with: " ")): \(Int(value))°"
-                            )
-                        }
-                    }
-                }
-
-                Button("Run Another Check", action: runAnalysis)
-                    .buttonStyle(PrimaryActionButtonStyle())
-            }
-        }
-    }
-
-    // MARK: - Saran 1: Phase badge views
-
-    /// Compact inline badge shown in the rep counter card and result card.
-    @ViewBuilder
     private func phaseBadge(_ phase: MovementPhase) -> some View {
         HStack(spacing: 4) {
-            Image(systemName: phaseIcon(phase))
-                .font(.caption2)
-            Text(phaseLabel(phase))
-                .font(FitnessTypography.caption)
+            Image(systemName: phaseIcon(phase)).font(.caption2)
+            Text(phaseLabel(phase)).font(FitnessTypography.caption)
         }
         .foregroundStyle(phaseColor(phase))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 8).padding(.vertical, 4)
         .background(phaseColor(phase).opacity(0.15))
         .clipShape(Capsule())
         .animation(.easeInOut(duration: 0.2), value: phase)
     }
 
-    /// Smaller badge for the live camera dark overlay.
-    @ViewBuilder
-    private func phaseOverlayBadge(_ phase: MovementPhase) -> some View {
+    private func savedToast(_ message: String) -> some View {
+        Text(message)
+            .font(FitnessTypography.caption).foregroundStyle(.black)
+            .padding(.horizontal, FitnessSpacing.large)
+            .padding(.vertical, FitnessSpacing.small)
+            .background(FitnessTheme.accent).clipShape(Capsule())
+            .padding(.bottom, FitnessSpacing.xLarge)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .animation(.spring(response: 0.4, dampingFraction: 0.75), value: message)
+    }
+
+    private func analysisResultCard(analysis: ExerciseAnalysis) -> some View {
+        FitnessCard {
+            VStack(alignment: .leading, spacing: FitnessSpacing.medium) {
+                HStack {
+                    MetricBadge(systemImage: statusIcon(for: analysis.status),
+                                text: statusTitle(for: analysis.status),
+                                tint: statusTint(for: analysis.status))
+                    Spacer()
+                    Text("\(Int(analysis.postureConfidence * 100))% confidence")
+                        .font(FitnessTypography.caption)
+                        .foregroundStyle(FitnessTheme.secondaryText)
+                }
+                if let fb = analysis.formFeedback { formFeedbackChip(fb) }
+                Text(analysis.coachingCue)
+                    .font(FitnessTypography.sectionTitle)
+                    .foregroundStyle(FitnessTheme.primaryText)
+                if let phase = analysis.movementPhase, phase != .standing { phaseBadge(phase) }
+            }
+        }
+    }
+
+    // MARK: - Camera launch helper
+
+#if !targetEnvironment(simulator) && canImport(AVFoundation)
+    private func launchCamera() async {
+        cameraController.onFrame = { [cameraController] pixelBuffer in
+            let buf = SendablePixelBuffer(pixelBuffer)
+            let isFront = cameraController.isFrontCamera
+            Task { @MainActor in
+                await viewModel.analyze(pixelBuffer: buf.value, isFrontCamera: isFront)
+            }
+        }
+        viewModel.beginLiveAnalysis()
+        let state = await cameraController.start()
+        switch state {
+        case .denied:  viewModel.handleCameraAccessDenied()
+        case .failed(let msg): viewModel.handleCameraUnavailable(msg)
+        default: break
+        }
+    }
+#endif
+
+    // MARK: - Helpers
+
+    private func phaseIcon(_ phase: MovementPhase) -> String {
+        switch phase {
+        case .standing: return "figure.stand"
+        case .descending: return "arrow.down"
+        case .bottom: return "checkmark.circle.fill"
+        case .rising: return "arrow.up"
+        }
+    }
+    private func phaseLabel(_ phase: MovementPhase) -> String {
+        switch phase {
+        case .standing: return "Standing"
+        case .descending: return "Descending ↓"
+        case .bottom: return "Bottom ✓"
+        case .rising: return "Rising ↑"
+        }
+    }
+    private func phaseColor(_ phase: MovementPhase) -> Color {
+        switch phase {
+        case .standing: return FitnessTheme.secondaryText
+        case .descending: return FitnessTheme.caution
+        case .bottom: return FitnessTheme.success
+        case .rising: return FitnessTheme.accent
+        }
+    }
+    private func formFeedbackChip(_ feedback: ExerciseFormFeedback) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: feedbackIcon(feedback)).font(.caption)
+            Text(feedbackLabel(feedback)).font(FitnessTypography.caption)
+        }
+        .foregroundStyle(feedbackColor(feedback))
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(feedbackColor(feedback).opacity(0.15))
+        .overlay(Capsule().stroke(feedbackColor(feedback).opacity(0.3), lineWidth: 1))
+        .clipShape(Capsule())
+    }
+    private func feedbackIcon(_ f: ExerciseFormFeedback) -> String {
+        switch f {
+        case .goodForm: return "checkmark.seal.fill"
+        case .tooShallow: return "arrow.down.to.line"
+        case .torsoLean: return "figure.walk"
+        case .kneeIssue: return "exclamationmark.triangle.fill"
+        case .lowConfidence: return "eye.slash"
+        case .bodyNotVisible: return "person.fill.xmark"
+        }
+    }
+    private func feedbackLabel(_ f: ExerciseFormFeedback) -> String {
+        switch f {
+        case .goodForm: return "Good Form"
+        case .tooShallow: return "Too Shallow"
+        case .torsoLean: return "Chest Forward"
+        case .kneeIssue: return "Knee Alignment"
+        case .lowConfidence: return "Low Confidence"
+        case .bodyNotVisible: return "Body Not Visible"
+        }
+    }
+    private func feedbackColor(_ f: ExerciseFormFeedback) -> Color {
+        switch f {
+        case .goodForm: return FitnessTheme.success
+        case .tooShallow, .torsoLean: return FitnessTheme.caution
+        case .kneeIssue: return .orange
+        case .lowConfidence, .bodyNotVisible: return FitnessTheme.secondaryText
+        }
+    }
+    private func statusIcon(for s: ExerciseFormStatus) -> String {
+        switch s {
+        case .acceptable: return "checkmark.circle"
+        case .excellent: return "checkmark.seal.fill"
+        case .needsAttention: return "exclamationmark.triangle.fill"
+        case .unavailable: return "questionmark.circle"
+        }
+    }
+    private func statusTitle(for s: ExerciseFormStatus) -> String {
+        switch s {
+        case .acceptable: return "Good baseline"
+        case .excellent: return "Strong form"
+        case .needsAttention: return "Needs adjustment"
+        case .unavailable: return "Unavailable"
+        }
+    }
+    private func statusTint(for s: ExerciseFormStatus) -> Color {
+        switch s {
+        case .acceptable: return FitnessTheme.accent
+        case .excellent: return FitnessTheme.success
+        case .needsAttention: return FitnessTheme.caution
+        case .unavailable: return FitnessTheme.secondaryText
+        }
+    }
+}
+
+// MARK: - Full-screen camera view
+
+#if !targetEnvironment(simulator) && canImport(AVFoundation)
+private struct FullScreenCameraView: View {
+    @ObservedObject var viewModel: ExerciseCameraAnalysisViewModel
+    @ObservedObject var cameraController: CameraCaptureController
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack {
+            // ── 1. Black base ──
+            Color.black.ignoresSafeArea()
+
+            // ── 2. Camera feed (full bleed) ──
+            CameraPreviewView(session: cameraController.session)
+                .ignoresSafeArea()
+
+            // ── 3. Skeleton overlay ──
+            if !cameraController.isPaused,
+               let joints = viewModel.latestAnalysis?.poseJointPositions,
+               !joints.isEmpty {
+                SkeletonOverlayView(joints: joints)
+                    .ignoresSafeArea()
+            }
+
+            // ── 4. Pause dimmer ──
+            if cameraController.isPaused {
+                Color.black.opacity(0.6).ignoresSafeArea()
+                VStack(spacing: 12) {
+                    Image(systemName: "pause.circle.fill")
+                        .font(.system(size: 72))
+                        .foregroundStyle(.white.opacity(0.9))
+                    Text("Paused")
+                        .font(.title.bold())
+                        .foregroundStyle(.white)
+                }
+            }
+
+            // ── 5. HUD ──
+            VStack(spacing: 0) {
+                topBar
+                    .padding(.top, 8)
+                compactExercisePicker
+                    .padding(.top, 8)
+                Spacer()
+                bottomPanel
+            }
+        }
+        .preferredColorScheme(.dark)
+        .ignoresSafeArea(edges: .top)
+        .onDisappear {
+            cameraController.stop()
+            viewModel.resetCameraSession()
+        }
+    }
+
+    // MARK: Top bar
+
+    private var topBar: some View {
+        HStack {
+            // Close button
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 36, height: 36)
+                    .background(.black.opacity(0.45))
+                    .clipShape(Circle())
+            }
+            .padding(.leading, 16)
+
+            Spacer()
+
+            // Exercise label
+            Text(viewModel.selectedExercise.rawValue)
+                .font(.headline.bold())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14).padding(.vertical, 6)
+                .background(.black.opacity(0.45))
+                .clipShape(Capsule())
+
+            Spacer()
+
+            // Flip camera button
+            Button { cameraController.switchCamera() } label: {
+                Image(systemName: "camera.rotate.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 36, height: 36)
+                    .background(.black.opacity(0.45))
+                    .clipShape(Circle())
+            }
+            .disabled(cameraController.state != .configured)
+            .padding(.trailing, 16)
+        }
+    }
+
+    // MARK: Compact exercise picker
+
+    private var compactExercisePicker: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(DetectedExercise.trackableExercises, id: \.self) { ex in
+                    Button { viewModel.selectExercise(ex) } label: {
+                        Text(ex.rawValue)
+                            .font(.caption.bold())
+                            .foregroundStyle(viewModel.selectedExercise == ex ? .black : .white)
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(
+                                viewModel.selectedExercise == ex
+                                    ? FitnessTheme.accent
+                                    : Color.white.opacity(0.18)
+                            )
+                            .clipShape(Capsule())
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+    }
+
+    // MARK: Bottom panel
+
+    private var bottomPanel: some View {
+        VStack(spacing: 0) {
+            // ── Rep count + phase ──
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let phase = viewModel.currentPhase {
+                        phaseChip(phase)
+                    }
+                    if let feedback = viewModel.latestAnalysis?.formFeedback {
+                        formChip(feedback)
+                    }
+                    if viewModel.sessionElapsedSeconds > 0 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "timer").font(.caption2)
+                            Text(viewModel.sessionTimerDisplay).font(.caption2.monospacedDigit())
+                        }
+                        .foregroundStyle(.white.opacity(0.7))
+                    }
+                }
+                Spacer()
+                // Big rep counter
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text("\(viewModel.repCount)")
+                        .font(.system(size: 80, weight: .black, design: .rounded))
+                        .foregroundStyle(FitnessTheme.accent)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                    Text("reps")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+
+            // ── Coaching cue ──
+            if let cue = viewModel.latestAnalysis?.coachingCue, !cue.isEmpty {
+                Text(cue)
+                    .font(.subheadline.bold())
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 10)
+            }
+
+            // ── Controls row ──
+            HStack(spacing: 12) {
+                // Pause / Resume
+                Button {
+                    cameraController.isPaused ? cameraController.resume() : cameraController.pause()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: cameraController.isPaused ? "play.fill" : "pause.fill")
+                        Text(cameraController.isPaused ? "Resume" : "Pause")
+                            .fontWeight(.semibold)
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(.black)
+                    .frame(maxWidth: .infinity).frame(height: 44)
+                    .background(FitnessTheme.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+
+                // Stop
+                Button {
+                    dismiss()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "stop.fill")
+                        Text("Stop").fontWeight(.semibold)
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(FitnessTheme.caution)
+                    .frame(maxWidth: .infinity).frame(height: 44)
+                    .background(FitnessTheme.caution.opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(FitnessTheme.caution.opacity(0.4), lineWidth: 1)
+                    )
+                }
+
+                // Save (only when reps exist)
+                if viewModel.canSaveSession {
+                    Button {
+                        Task { await viewModel.saveSession() }
+                    } label: {
+                        Group {
+                            if viewModel.isSavingSession {
+                                ProgressView().tint(.black).scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "icloud.and.arrow.up")
+                                    .font(.subheadline.bold())
+                                    .foregroundStyle(.black)
+                            }
+                        }
+                        .frame(width: 44, height: 44)
+                        .background(FitnessTheme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .disabled(viewModel.isSavingSession)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 32)   // accounts for home indicator
+        }
+        .background(.ultraThinMaterial)
+    }
+
+    // MARK: - Bottom panel chips
+
+    private func phaseChip(_ phase: MovementPhase) -> some View {
         HStack(spacing: 4) {
-            Image(systemName: phaseIcon(phase))
-                .font(.caption2)
-            Text(phaseLabel(phase))
-                .font(.caption2.bold())
+            Image(systemName: phaseIcon(phase)).font(.caption2)
+            Text(phaseLabel(phase)).font(.caption.bold())
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .padding(.horizontal, 10).padding(.vertical, 4)
         .background(phaseColor(phase).opacity(0.75))
         .clipShape(Capsule())
         .animation(.easeInOut(duration: 0.15), value: phase)
     }
 
-    private func phaseIcon(_ phase: MovementPhase) -> String {
-        switch phase {
+    private func formChip(_ feedback: ExerciseFormFeedback) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: formIcon(feedback)).font(.caption2)
+            Text(formLabel(feedback)).font(.caption.bold())
+        }
+        .foregroundStyle(formColor(feedback))
+        .padding(.horizontal, 10).padding(.vertical, 4)
+        .background(formColor(feedback).opacity(0.20))
+        .clipShape(Capsule())
+    }
+
+    // MARK: - Helpers
+
+    private func phaseIcon(_ p: MovementPhase) -> String {
+        switch p {
         case .standing:   return "figure.stand"
         case .descending: return "arrow.down"
         case .bottom:     return "checkmark.circle.fill"
         case .rising:     return "arrow.up"
         }
     }
-
-    private func phaseLabel(_ phase: MovementPhase) -> String {
-        switch phase {
+    private func phaseLabel(_ p: MovementPhase) -> String {
+        switch p {
         case .standing:   return "Standing"
-        case .descending: return "Descending ↓"
+        case .descending: return "Going down"
         case .bottom:     return "Bottom ✓"
-        case .rising:     return "Rising ↑"
+        case .rising:     return "Coming up"
         }
     }
-
-    private func phaseColor(_ phase: MovementPhase) -> Color {
-        switch phase {
-        case .standing:   return FitnessTheme.secondaryText
+    private func phaseColor(_ p: MovementPhase) -> Color {
+        switch p {
+        case .standing:   return Color.gray
         case .descending: return FitnessTheme.caution
         case .bottom:     return FitnessTheme.success
         case .rising:     return FitnessTheme.accent
         }
     }
-
-    // MARK: - Saran 2: Form feedback chip
-
-    @ViewBuilder
-    private func formFeedbackChip(_ feedback: ExerciseFormFeedback) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: feedbackIcon(feedback))
-                .font(.caption)
-            Text(feedbackLabel(feedback))
-                .font(FitnessTypography.caption)
-        }
-        .foregroundStyle(feedbackColor(feedback))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(feedbackColor(feedback).opacity(0.15))
-        .overlay(
-            Capsule().stroke(feedbackColor(feedback).opacity(0.3), lineWidth: 1)
-        )
-        .clipShape(Capsule())
-    }
-
-    private func feedbackIcon(_ feedback: ExerciseFormFeedback) -> String {
-        switch feedback {
-        case .goodForm:        return "checkmark.seal.fill"
-        case .tooShallow:      return "arrow.down.to.line"
-        case .torsoLean:       return "figure.walk"
-        case .kneeIssue:       return "exclamationmark.triangle.fill"
-        case .lowConfidence:   return "eye.slash"
-        case .bodyNotVisible:  return "person.fill.xmark"
+    private func formIcon(_ f: ExerciseFormFeedback) -> String {
+        switch f {
+        case .goodForm:       return "checkmark.seal.fill"
+        case .tooShallow:     return "arrow.down.to.line"
+        case .torsoLean:      return "figure.walk"
+        case .kneeIssue:      return "exclamationmark.triangle.fill"
+        case .lowConfidence:  return "eye.slash"
+        case .bodyNotVisible: return "person.fill.xmark"
         }
     }
-
-    private func feedbackLabel(_ feedback: ExerciseFormFeedback) -> String {
-        switch feedback {
-        case .goodForm:        return "Good Form"
-        case .tooShallow:      return "Too Shallow"
-        case .torsoLean:       return "Chest Forward"
-        case .kneeIssue:       return "Knee Alignment"
-        case .lowConfidence:   return "Low Confidence"
-        case .bodyNotVisible:  return "Body Not Visible"
+    private func formLabel(_ f: ExerciseFormFeedback) -> String {
+        switch f {
+        case .goodForm:       return "Good Form"
+        case .tooShallow:     return "Go Deeper"
+        case .torsoLean:      return "Chest Up"
+        case .kneeIssue:      return "Knee Alignment"
+        case .lowConfidence:  return "Low Confidence"
+        case .bodyNotVisible: return "Not Visible"
         }
     }
-
-    private func feedbackColor(_ feedback: ExerciseFormFeedback) -> Color {
-        switch feedback {
-        case .goodForm:                          return FitnessTheme.success
-        case .tooShallow, .torsoLean:            return FitnessTheme.caution
-        case .kneeIssue:                         return Color.orange
-        case .lowConfidence, .bodyNotVisible:    return FitnessTheme.secondaryText
-        }
-    }
-
-    // MARK: - Toast
-
-    private func savedToast(_ message: String) -> some View {
-        Text(message)
-            .font(FitnessTypography.caption)
-            .foregroundStyle(.black)
-            .padding(.horizontal, FitnessSpacing.large)
-            .padding(.vertical, FitnessSpacing.small)
-            .background(FitnessTheme.accent)
-            .clipShape(Capsule())
-            .padding(.bottom, FitnessSpacing.xLarge)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-            .animation(.spring(response: 0.4, dampingFraction: 0.75), value: message)
-    }
-
-    // MARK: - Actions
-
-    private func runAnalysis() {
-#if targetEnvironment(simulator)
-        Task { await viewModel.runPreviewAnalysis() }
-#else
-        Task { await startCameraIfNeeded() }
-#endif
-    }
-
-    private var actionTitle: String {
-#if targetEnvironment(simulator)
-        "Analyze \(viewModel.selectedExercise.rawValue)"
-#else
-        "Start Live Camera"
-#endif
-    }
-
-#if canImport(AVFoundation)
-    private func startCameraIfNeeded() async {
-        cameraController.onFrame = { [cameraController] pixelBuffer in
-            let wrappedBuffer = SendablePixelBuffer(pixelBuffer)
-            let isFront = cameraController.isFrontCamera
-            Task { @MainActor in
-                await viewModel.analyze(pixelBuffer: wrappedBuffer.value, isFrontCamera: isFront)
-            }
-        }
-
-        viewModel.beginLiveAnalysis()
-        let state = await cameraController.start()
-
-        switch state {
-        case .configured:
-            break
-        case .denied:
-            viewModel.handleCameraAccessDenied()
-        case .failed(let message):
-            viewModel.handleCameraUnavailable(message)
-        case .idle, .requestingPermission:
-            break
-        }
-    }
-#endif
-
-    // MARK: - Status helpers
-
-    private func statusIcon(for status: ExerciseFormStatus) -> String {
-        switch status {
-        case .acceptable:     return "checkmark.circle"
-        case .excellent:      return "checkmark.seal.fill"
-        case .needsAttention: return "exclamationmark.triangle.fill"
-        case .unavailable:    return "questionmark.circle"
-        }
-    }
-
-    private func statusTitle(for status: ExerciseFormStatus) -> String {
-        switch status {
-        case .acceptable:     return "Good baseline"
-        case .excellent:      return "Strong form"
-        case .needsAttention: return "Needs adjustment"
-        case .unavailable:    return "Unavailable"
-        }
-    }
-
-    private func statusTint(for status: ExerciseFormStatus) -> Color {
-        switch status {
-        case .acceptable:     return FitnessTheme.accent
-        case .excellent:      return FitnessTheme.success
-        case .needsAttention: return FitnessTheme.caution
-        case .unavailable:    return FitnessTheme.secondaryText
+    private func formColor(_ f: ExerciseFormFeedback) -> Color {
+        switch f {
+        case .goodForm:                       return FitnessTheme.success
+        case .tooShallow, .torsoLean:         return FitnessTheme.caution
+        case .kneeIssue:                      return Color.orange
+        case .lowConfidence, .bodyNotVisible: return Color.gray
         }
     }
 }
-
-// MARK: - Helpers
-
-private struct BottomRoundedShape: Shape {
-    var radius: CGFloat
-    func path(in rect: CGRect) -> Path {
-        Path { p in
-            p.move(to: CGPoint(x: rect.minX, y: rect.minY))
-            p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-            p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
-            p.addQuadCurve(
-                to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
-                control: CGPoint(x: rect.maxX, y: rect.maxY)
-            )
-            p.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
-            p.addQuadCurve(
-                to: CGPoint(x: rect.minX, y: rect.maxY - radius),
-                control: CGPoint(x: rect.minX, y: rect.maxY)
-            )
-            p.closeSubpath()
-        }
-    }
-}
+#endif
