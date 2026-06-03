@@ -33,6 +33,8 @@ public final class CameraCaptureController: NSObject, ObservableObject {
     @Published public private(set) var state: State = .idle
     /// True when the front camera is active, false for back camera.
     @Published public private(set) var isFrontCamera: Bool = true
+    /// True while the session is running but frame analysis is paused.
+    @Published public private(set) var isPaused: Bool = false
 
     public let session = AVCaptureSession()
     public var onFrame: ((CVPixelBuffer) -> Void)?
@@ -78,13 +80,26 @@ public final class CameraCaptureController: NSObject, ObservableObject {
         return state
     }
 
-    // MARK: - Stop
+    // MARK: - Stop / Pause / Resume
 
+    /// Stops the camera session completely and resets state to `.idle`.
     public func stop() {
-        sessionQueue.async { [session] in
+        isPaused = false
+        sessionQueue.async { [session, weak self] in
             guard session.isRunning else { return }
             session.stopRunning()
+            DispatchQueue.main.async { self?.state = .idle }
         }
+    }
+
+    /// Freezes frame delivery without stopping the session (preview stays live).
+    public func pause() {
+        isPaused = true
+    }
+
+    /// Resumes frame delivery after a pause.
+    public func resume() {
+        isPaused = false
     }
 
     // MARK: - Switch Front ↔ Back
@@ -219,7 +234,8 @@ extension CameraCaptureController: AVCaptureVideoDataOutputSampleBufferDelegate 
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        guard !isPaused,
+              let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         onFrame?(pixelBuffer)
     }
 }

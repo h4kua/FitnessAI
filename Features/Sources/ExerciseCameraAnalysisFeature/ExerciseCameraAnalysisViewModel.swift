@@ -135,6 +135,16 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
         loadState = .failed(message)
     }
 
+    /// Called when the user taps Stop — resets to idle so they can start a fresh session.
+    public func resetCameraSession() {
+        loadState = .idle
+        latestAnalysis = nil
+        stopSessionTimer()
+        sessionElapsedSeconds = 0
+        sessionStartedAt = nil
+        cameraMessage = "Start the camera to analyze posture in real time."
+    }
+
     public func analyze(pixelBuffer: CVPixelBuffer, isFrontCamera: Bool = true) async {
         do {
             let analysis = try await exerciseAnalysisProvider.analyze(

@@ -33,6 +33,9 @@ public struct ExerciseAnalysis: Sendable, Equatable, Codable {
     public let repCount: Int
     /// Key joint angles in degrees, used to generate the coaching cue.
     public let jointAngles: [String: Double]
+    /// Raw normalized joint positions (Vision space: x 0–1 left→right, y 0–1 bottom→top).
+    /// Used by SkeletonOverlayView to draw the ridge-skeleton on the live camera feed.
+    public let poseJointPositions: [String: PosePoint]
     /// Typed form feedback — compatible with future Core ML output labels.
     public let formFeedback: ExerciseFormFeedback?
     /// Current movement phase in the rep cycle.
@@ -46,6 +49,7 @@ public struct ExerciseAnalysis: Sendable, Equatable, Codable {
         detectedExercise: DetectedExercise = .unknown,
         repCount: Int = 0,
         jointAngles: [String: Double] = [:],
+        poseJointPositions: [String: PosePoint] = [:],
         formFeedback: ExerciseFormFeedback? = nil,
         movementPhase: MovementPhase? = nil
     ) {
@@ -56,6 +60,7 @@ public struct ExerciseAnalysis: Sendable, Equatable, Codable {
         self.detectedExercise = detectedExercise
         self.repCount = repCount
         self.jointAngles = jointAngles
+        self.poseJointPositions = poseJointPositions
         self.formFeedback = formFeedback
         self.movementPhase = movementPhase
     }

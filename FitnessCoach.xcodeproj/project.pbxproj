@@ -60,6 +60,7 @@
 		665EE422517F01B6BC27DE97 /* ExerciseCameraAnalysisView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA2D2D5101E7DEDB2DBB126D /* ExerciseCameraAnalysisView.swift */; };
 		66A0B1C2D3E4F5061728394A /* CameraCaptureController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76A0B1C2D3E4F5061728394A /* CameraCaptureController.swift */; };
 		66A0B1C2D3E4F5061728394B /* CameraPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76A0B1C2D3E4F5061728394B /* CameraPreviewView.swift */; };
+		DD100001DD100001DD100001 /* SkeletonOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD200001DD200001DD200001 /* SkeletonOverlayView.swift */; };
 		6C8B15616D58D774DC9F0CBA /* WorkoutRecommendationProviding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 546D59B27A518F1FFD002F07 /* WorkoutRecommendationProviding.swift */; };
 		701E130FD60F481382259845 /* FirebaseAuthenticationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F093FEB05874B52BE56D849 /* FirebaseAuthenticationService.swift */; };
 		70F35A4C80053EEDED4C110A /* CalorieGoal.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6FF525F2E0EE102E9E81B12 /* CalorieGoal.swift */; };
@@ -164,6 +165,7 @@
 		73CD53CE79AD43FFA4683F4D /* ExerciseSearchQuery.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExerciseSearchQuery.swift; path = Domain/ExerciseSearchQuery.swift; sourceTree = "<group>"; };
 		76A0B1C2D3E4F5061728394A /* CameraCaptureController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CameraCaptureController.swift; path = ExerciseCameraAnalysisFeature/CameraCaptureController.swift; sourceTree = "<group>"; };
 		76A0B1C2D3E4F5061728394B /* CameraPreviewView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CameraPreviewView.swift; path = ExerciseCameraAnalysisFeature/CameraPreviewView.swift; sourceTree = "<group>"; };
+		DD200001DD200001DD200001 /* SkeletonOverlayView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SkeletonOverlayView.swift; path = ExerciseCameraAnalysisFeature/SkeletonOverlayView.swift; sourceTree = "<group>"; };
 		7745C055CE0B516B26EFB241 /* ExerciseAnalysisProviding.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExerciseAnalysisProviding.swift; path = Interfaces/ExerciseAnalysisProviding.swift; sourceTree = "<group>"; };
 		7E3FBB79DF3C476DA2F9048C /* Debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		7FF1E265F0DD2A176F2B4163 /* AppLogger.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppLogger.swift; path = Logging/AppLogger.swift; sourceTree = "<group>"; };
@@ -338,6 +340,7 @@
 				6DAB4A5FECFB9D8B815CD054 /* DashboardViewModel.swift */,
 				76A0B1C2D3E4F5061728394A /* CameraCaptureController.swift */,
 				76A0B1C2D3E4F5061728394B /* CameraPreviewView.swift */,
+				DD200001DD200001DD200001 /* SkeletonOverlayView.swift */,
 				EA2D2D5101E7DEDB2DBB126D /* ExerciseCameraAnalysisView.swift */,
 				B6C98CF6254C35A29475FD15 /* ExerciseCameraAnalysisViewModel.swift */,
 				FF2F32114223489E91C7F96C /* CoachChatView.swift */,
@@ -596,6 +599,7 @@
 				2320FB5BD2F85F14972E47EC /* DashboardViewModel.swift in Sources */,
 				66A0B1C2D3E4F5061728394A /* CameraCaptureController.swift in Sources */,
 				66A0B1C2D3E4F5061728394B /* CameraPreviewView.swift in Sources */,
+				DD100001DD100001DD100001 /* SkeletonOverlayView.swift in Sources */,
 				665EE422517F01B6BC27DE97 /* ExerciseCameraAnalysisView.swift in Sources */,
 				F4CF5D49F835EC9BA30B4CE0 /* ExerciseCameraAnalysisViewModel.swift in Sources */,
 				103F1D7688DC4857BE0EE08C /* CoachChatView.swift in Sources */,

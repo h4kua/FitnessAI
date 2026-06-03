@@ -47,6 +47,7 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
         let meanConf = sample.meanConfidence
         let (exercise, exerciseConfidence) = classifier.classify(sample: sample)
         let rawAngles = classifier.extractAngles(from: sample.jointPositions)
+        let rawPositions = sample.jointPositions      // forwarded to ExerciseAnalysis for skeleton overlay
 
         // Extract structured features and update smoothers
         var features = featureExtractor.extract(from: sample, phase: currentPhase)
@@ -106,6 +107,7 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
                 status: statusFromFeedback(formFeedback, confidence: exerciseConfidence),
                 detectedExercise: exercise,
                 jointAngles: rawAngles,
+                poseJointPositions: rawPositions,
                 formFeedback: formFeedback,
                 movementPhase: currentPhase
             )
@@ -119,6 +121,7 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
                 status: .acceptable,
                 detectedExercise: exercise,
                 jointAngles: rawAngles,
+                poseJointPositions: rawPositions,
                 formFeedback: formFeedback ?? .lowConfidence,
                 movementPhase: currentPhase
             )
@@ -131,6 +134,7 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
             status: .needsAttention,
             detectedExercise: .unknown,
             jointAngles: [:],
+            poseJointPositions: [:],
             formFeedback: .bodyNotVisible,
             movementPhase: .standing
         )

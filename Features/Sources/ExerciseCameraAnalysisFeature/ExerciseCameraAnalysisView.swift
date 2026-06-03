@@ -273,29 +273,62 @@ public struct ExerciseCameraAnalysisView: View {
         FitnessCard(title: "Live Camera") {
             VStack(alignment: .leading, spacing: FitnessSpacing.medium) {
 #if canImport(AVFoundation)
+                // ── Camera preview + skeleton + overlays ──
                 ZStack(alignment: .bottom) {
+                    // 1. Video feed
                     CameraPreviewView(session: cameraController.session)
                         .frame(height: 340)
                         .background(Color.black)
                         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
 
-                    // Camera flip button — top-right corner
-                    .overlay(alignment: .topTrailing) {
-                        Button {
-                            cameraController.switchCamera()
-                        } label: {
-                            Image(systemName: "camera.rotate.fill")
-                                .font(.system(size: 20, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .padding(10)
-                                .background(.black.opacity(0.45))
-                                .clipShape(Circle())
-                        }
-                        .padding(12)
-                        .disabled(cameraController.state != .configured)
-                    }
+                        // 2. Ridge-skeleton overlay
+                        .overlay(
+                            Group {
+                                if cameraController.state == .configured,
+                                   let joints = viewModel.latestAnalysis?.poseJointPositions,
+                                   !joints.isEmpty,
+                                   !cameraController.isPaused {
+                                    SkeletonOverlayView(joints: joints)
+                                }
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                        )
 
-                    // Phase + rep + timer overlay
+                        // 3. Pause dim overlay
+                        .overlay(
+                            Group {
+                                if cameraController.isPaused {
+                                    ZStack {
+                                        Color.black.opacity(0.55)
+                                        VStack(spacing: 8) {
+                                            Image(systemName: "pause.circle.fill")
+                                                .font(.system(size: 52))
+                                                .foregroundStyle(.white.opacity(0.9))
+                                            Text("Paused")
+                                                .font(FitnessTypography.sectionTitle)
+                                                .foregroundStyle(.white)
+                                        }
+                                    }
+                                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                                }
+                            }
+                        )
+
+                        // 4. Camera-flip button — top-right
+                        .overlay(alignment: .topTrailing) {
+                            Button { cameraController.switchCamera() } label: {
+                                Image(systemName: "camera.rotate.fill")
+                                    .font(.system(size: 20, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                    .padding(10)
+                                    .background(.black.opacity(0.45))
+                                    .clipShape(Circle())
+                            }
+                            .padding(12)
+                            .disabled(cameraController.state != .configured)
+                        }
+
+                    // 5. Info bar — bottom
                     HStack(alignment: .bottom) {
                         VStack(alignment: .leading, spacing: 4) {
                             if viewModel.currentExercise != .unknown {
@@ -306,13 +339,10 @@ public struct ExerciseCameraAnalysisView: View {
                             if let phase = viewModel.currentPhase {
                                 phaseOverlayBadge(phase)
                             }
-                            // Session timer
                             if viewModel.sessionElapsedSeconds > 0 {
                                 HStack(spacing: 4) {
-                                    Image(systemName: "timer")
-                                        .font(.caption2)
-                                    Text(viewModel.sessionTimerDisplay)
-                                        .font(.caption2.monospacedDigit())
+                                    Image(systemName: "timer").font(.caption2)
+                                    Text(viewModel.sessionTimerDisplay).font(.caption2.monospacedDigit())
                                 }
                                 .foregroundStyle(.white.opacity(0.8))
                             }
@@ -334,12 +364,53 @@ public struct ExerciseCameraAnalysisView: View {
                     .clipShape(BottomRoundedShape(radius: 24))
                 }
 
-                Text(viewModel.cameraMessage)
+                Text(cameraController.isPaused
+                     ? "Session paused — tap Resume to continue."
+                     : viewModel.cameraMessage)
                     .font(FitnessTypography.body)
                     .foregroundStyle(FitnessTheme.secondaryText)
 
-                Button("Start Live Camera", action: runAnalysis)
-                    .buttonStyle(PrimaryActionButtonStyle())
+                // ── Session controls ──
+                if cameraController.state == .configured {
+                    HStack(spacing: FitnessSpacing.small) {
+                        // Pause / Resume
+                        Button {
+                            if cameraController.isPaused {
+                                cameraController.resume()
+                            } else {
+                                cameraController.pause()
+                            }
+                        } label: {
+                            Label(
+                                cameraController.isPaused ? "Resume" : "Pause",
+                                systemImage: cameraController.isPaused ? "play.fill" : "pause.fill"
+                            )
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 48)
+                        }
+                        .buttonStyle(PrimaryActionButtonStyle())
+
+                        // Stop
+                        Button {
+                            cameraController.stop()
+                            viewModel.resetCameraSession()
+                        } label: {
+                            Label("Stop", systemImage: "stop.fill")
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 48)
+                                .background(FitnessTheme.surface)
+                                .foregroundStyle(FitnessTheme.caution)
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .stroke(FitnessTheme.caution.opacity(0.4), lineWidth: 1.5)
+                                )
+                        }
+                    }
+                } else {
+                    Button("Start Live Camera", action: runAnalysis)
+                        .buttonStyle(PrimaryActionButtonStyle())
+                }
 #endif
             }
         }
