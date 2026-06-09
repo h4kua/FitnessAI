@@ -20,6 +20,15 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
     private let groqCoaching: GroqCoachingService?
     private var lastPoseDetectionAt: Date?
 
+    // ── ML Action Classifier state ────────────────────────────────────────────
+    // Stored as raw primitives so analyze(sample:) can read them without #if guards
+    // around the ActionClassifierService type (which lives inside #if Vision+CoreML).
+    private var lastMLLabel: String? = nil
+    private var lastMLLabelConfidence: Double = 0.0
+#if canImport(Vision) && canImport(CoreML)
+    private let actionClassifier = ActionClassifierService()
+#endif
+
     // Angle smoothers (one per key joint) — reduce Vision frame noise
     private var leftKneeSmoother  = AngleSmoother(windowSize: 4)
     private var rightKneeSmoother = AngleSmoother(windowSize: 4)
@@ -45,9 +54,29 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
 
     public func analyze(sample: BodyPoseSample) async throws -> ExerciseAnalysis {
         let meanConf = sample.meanConfidence
-        let (exercise, exerciseConfidence) = classifier.classify(sample: sample)
         let rawAngles = classifier.extractAngles(from: sample.jointPositions)
         let rawPositions = sample.jointPositions      // forwarded to ExerciseAnalysis for skeleton overlay
+
+        // ── Step 1: Classify exercise ─────────────────────────────────────────
+        // MyActionClassifier labels for squat:
+        //   "squat_correct"     – good form, full depth
+        //   "squat_too_shallow" – insufficient depth
+        //   "squat_torse_lean"  – excessive forward lean  (class name typo in training data)
+        //
+        // Use the ML model when it is confident (≥ 0.55) on any squat class.
+        // Fall back to the rule-based ExercisePoseClassifier for all other exercises
+        // (push-up, jumping jack, etc.) which the model was not trained on.
+        let isMLSquatClass =
+            lastMLLabelConfidence >= 0.55 &&
+            (lastMLLabel == "squat_correct" ||
+             lastMLLabel == "squat_too_shallow" ||
+             lastMLLabel == "squat_torse_lean")
+
+        var (exercise, exerciseConfidence) = classifier.classify(sample: sample)
+        if isMLSquatClass {
+            exercise = .squat
+            exerciseConfidence = lastMLLabelConfidence
+        }
 
         // Extract structured features and update smoothers
         var features = featureExtractor.extract(from: sample, phase: currentPhase)
@@ -76,12 +105,21 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
             )
         }
 
-        // Rule-based form feedback (Lesson 10 exact logic)
-        let (formFeedback, cueOverride) = ruleBasedFeedback(
-            exercise: exercise,
-            features: features,
-            sampleConfidence: meanConf
-        )
+        // ── Step 2: Form feedback ─────────────────────────────────────────────
+        // When the ML model is confident on a squat class, its label IS the form
+        // assessment — use it directly.  For all other cases (other exercises,
+        // low ML confidence, or model not available) use the rule-based engine.
+        let (formFeedback, cueOverride): (ExerciseFormFeedback?, String?)
+        if isMLSquatClass, let mlFb = mlSquatFormFeedback(lastMLLabel) {
+            formFeedback = mlFb
+            cueOverride = mlSquatCue(mlFb)
+        } else {
+            (formFeedback, cueOverride) = ruleBasedFeedback(
+                exercise: exercise,
+                features: features,
+                sampleConfidence: meanConf
+            )
+        }
 
         // Coaching cue — rule-based ONLY in the camera hot-path.
         // Groq requires a network round-trip (8 s timeout) which would freeze
@@ -93,14 +131,17 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
         // Fire-and-forget Groq refresh (non-blocking) — only when online & no critical feedback.
         // The cue won't appear in THIS frame but may appear in a future frame if the
         // cooldown (3 s) and network allow it. This never delays the return value.
-        if exerciseConfidence >= 0.55,
+        // Snapshot vars → lets so they can be safely captured in Task.detached.
+        let snapshotExercise = exercise
+        let snapshotConfidence = exerciseConfidence
+        if snapshotConfidence >= 0.55,
            formFeedback == .goodForm || formFeedback == nil,
            let coaching = groqCoaching {
             Task.detached(priority: .background) {
                 _ = await coaching.coachingCue(
-                    for: exercise,
+                    for: snapshotExercise,
                     angles: rawAngles,
-                    confidence: exerciseConfidence
+                    confidence: snapshotConfidence
                 )
                 // Result intentionally discarded here — future frames use defaultCue;
                 // the AI Coach Chat tab is the proper surface for Groq responses.
@@ -208,7 +249,7 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
             return squatFeedback(f)
         case .pushUp:
             return pushUpFeedback(f)
-        case .pullUp, .jumpingJack, .sitUp:
+        case .pullUp, .jumpingJack, .sitUp, .plank:
             // These exercises: if we got here, form is detectable — pass through to default cue
             return (.goodForm, nil)
         case .standing, .unknown:
@@ -292,8 +333,47 @@ public actor VisionExerciseAnalysisService: ExerciseAnalysisProviding {
         case .pullUp:       return "Pull-up detected. Drive your elbows down and squeeze your back at the top."
         case .jumpingJack:  return "Jumping jack form looks good. Keep your core engaged."
         case .sitUp:        return "Sit-up detected. Avoid pulling on your neck — let your core do the work."
+        case .plank:        return "Plank detected. Keep your hips level and brace your core."
         case .standing:     return "Standing posture is stable. Maintain tempo and bracing."
         case .unknown:      return "Posture is stable. Maintain tempo and bracing."
+        }
+    }
+
+    // MARK: - ML Action Classifier helpers
+
+    /// Map the raw class label produced by MyActionClassifier to ``ExerciseFormFeedback``.
+    ///
+    /// | Model label            | Feedback        |
+    /// |------------------------|-----------------|
+    /// | `squat_correct`        | `.goodForm`     |
+    /// | `squat_too_shallow`    | `.tooShallow`   |
+    /// | `squat_torse_lean`     | `.torsoLean`    |
+    /// | `none` / `others` / — | `nil` (fallback)|
+    ///
+    /// Note: the class name in the trained model is "squat_torse_lean" (not "torso").
+    private func mlSquatFormFeedback(_ label: String?) -> ExerciseFormFeedback? {
+        switch label {
+        case "squat_correct":     return .goodForm
+        case "squat_too_shallow": return .tooShallow
+        case "squat_torse_lean":  return .torsoLean
+        default:                  return nil
+        }
+    }
+
+    /// Short, actionable coaching cue for each ML-classified squat form state.
+    /// Returns `nil` for `.goodForm` so the caller falls through to `defaultCue`.
+    private func mlSquatCue(_ feedback: ExerciseFormFeedback) -> String? {
+        switch feedback {
+        case .goodForm:
+            return nil   // use defaultCue → "Good squat position. Keep your chest up…"
+        case .tooShallow:
+            return "Lower your hips more — try to get your thighs parallel to the floor."
+        case .torsoLean:
+            return "Lift your chest and reduce forward lean — keep your core tight."
+        case .kneeIssue:
+            return "Guide your knees toward your toes — avoid inward collapse."
+        case .lowConfidence, .bodyNotVisible:
+            return nil
         }
     }
 }
@@ -342,6 +422,19 @@ public extension VisionExerciseAnalysisService {
 
         do {
             try handler.perform([request])
+
+            // ── Feed ML sliding window (PDF p. 52-55) ────────────────────────
+            // Append this frame's observation (or nil = no body → zero padding).
+            // Once the window reaches 60 frames the action classifier produces
+            // its first prediction; until then it returns the last known result.
+#if canImport(CoreML)
+            await actionClassifier.append(request.results?.first)
+            if let ml = await actionClassifier.predict() {
+                lastMLLabel = ml.label
+                lastMLLabelConfidence = ml.confidence
+            }
+#endif
+
             guard let observation = request.results?.first else {
                 throw AppError.dataUnavailable("No body pose was detected in the current frame.")
             }
@@ -375,9 +468,17 @@ public extension VisionExerciseAnalysisService {
 
 private extension VisionExerciseAnalysisService {
     func shouldProcessPoseFrame(capturedAt: Date) -> Bool {
-        defer { lastPoseDetectionAt = capturedAt }
-        guard let last = lastPoseDetectionAt else { return true }
-        return capturedAt.timeIntervalSince(last) >= minimumPoseInterval
+        guard let last = lastPoseDetectionAt else {
+            lastPoseDetectionAt = capturedAt
+            return true
+        }
+
+        guard capturedAt.timeIntervalSince(last) >= minimumPoseInterval else {
+            return false
+        }
+
+        lastPoseDetectionAt = capturedAt
+        return true
     }
 
     // MARK: - Vision → short-name joint map

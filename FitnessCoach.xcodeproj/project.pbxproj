@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AC110001AC110001AC110001 /* MyActionClassifier.mlmodel in Resources */ = {isa = PBXBuildFile; fileRef = AC220002AC220002AC220002 /* MyActionClassifier.mlmodel */; };
+		AC330003AC330003AC330003 /* ActionClassifierService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC440004AC440004AC440004 /* ActionClassifierService.swift */; };
 		00395EA0963995166F977DAE /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E093634AFDD74AE6550B454 /* SettingsViewModel.swift */; };
 		022A502D2AC16DD083595430 /* SettingsStoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50AB454BFD61F4F8706F1215 /* SettingsStoring.swift */; };
 		0488E7DF6609BE3FC28538CB /* BodyPoseSample.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BB337AB556F14CF85D511CE /* BodyPoseSample.swift */; };
@@ -178,6 +180,8 @@
 		BB200001BB200001BB200001 /* PoseFeatureExtractor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PoseFeatureExtractor.swift; path = Services/Sources/VisionMLService/PoseFeatureExtractor.swift; sourceTree = "<group>"; };
 		CC100001CC100001CC100001 /* CoreMLFormClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC200001CC200001CC200001 /* CoreMLFormClassifier.swift */; };
 		CC200001CC200001CC200001 /* CoreMLFormClassifier.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CoreMLFormClassifier.swift; path = Services/Sources/VisionMLService/CoreMLFormClassifier.swift; sourceTree = "<group>"; };
+		AC220002AC220002AC220002 /* MyActionClassifier.mlmodel */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file.mlmodel; name = MyActionClassifier.mlmodel; path = VisionMLService/MyActionClassifier.mlmodel; sourceTree = "<group>"; };
+		AC440004AC440004AC440004 /* ActionClassifierService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ActionClassifierService.swift; path = VisionMLService/ActionClassifierService.swift; sourceTree = "<group>"; };
 		90CC0541E8DDB23412E0B4C0 /* NetworkError.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NetworkError.swift; path = Networking/NetworkError.swift; sourceTree = "<group>"; };
 		91A17EE42E524B98B805DEE6 /* WorkoutSessionStoring.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WorkoutSessionStoring.swift; path = Interfaces/WorkoutSessionStoring.swift; sourceTree = "<group>"; };
 		91FF1A40FF76415D835C2840 /* DetectedExercise.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DetectedExercise.swift; path = Domain/DetectedExercise.swift; sourceTree = "<group>"; };
@@ -470,6 +474,8 @@
 				502EE674FDB148988CFD8388 /* FirebaseWorkoutSessionStore.swift */,
 				9722BF3009AEEDA10E4AA3D1 /* LiveHealthKitService.swift */,
 				3BEABEA26499A0AB61CAAEFE /* VisionExerciseAnalysisService.swift */,
+				AC440004AC440004AC440004 /* ActionClassifierService.swift */,
+				AC220002AC220002AC220002 /* MyActionClassifier.mlmodel */,
 				0C339496F6AE9603CD9238DE /* WorkoutRecommendationEngine.swift */,
 				4491083068DD45119BCA5AA8 /* ApiNinjasCalorieEstimatingService.swift */,
 				420E284D4A5D44ACA45ED0C3 /* ApiNinjasExerciseCatalogService.swift */,
@@ -546,6 +552,7 @@
 				973FDB30418873DE1461C6C4 /* Assets.xcassets in Resources */,
 				846D11FA050E8495FF66CBA0 /* PrivacyInfo.xcprivacy in Resources */,
 				4CCD7550E00744689236F903 /* GoogleService-Info.plist in Resources */,
+				AC110001AC110001AC110001 /* MyActionClassifier.mlmodel in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -642,6 +649,7 @@
 				983E4B08C99F4906A1C7934F /* ExercisePoseClassifier.swift in Sources */,
 				BB100001BB100001BB100001 /* PoseFeatureExtractor.swift in Sources */,
 				CC100001CC100001CC100001 /* CoreMLFormClassifier.swift in Sources */,
+				AC330003AC330003AC330003 /* ActionClassifierService.swift in Sources */,
 				3B1325CC897345079575DDD3 /* ExerciseSearchQuery.swift in Sources */,
 				3A9466FF7DA34D8EBDD2E3C4 /* ExerciseTemplate.swift in Sources */,
 				B6C08C8E02574367A63D1F4F /* ExerciseType.swift in Sources */,
