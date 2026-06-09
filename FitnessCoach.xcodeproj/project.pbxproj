@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		AC110001AC110001AC110001 /* MyActionClassifier.mlmodel in Resources */ = {isa = PBXBuildFile; fileRef = AC220002AC220002AC220002 /* MyActionClassifier.mlmodel */; };
 		AC330003AC330003AC330003 /* ActionClassifierService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC440004AC440004AC440004 /* ActionClassifierService.swift */; };
+		SC110001SC110001SC110001 /* SpeechCoach.swift in Sources */ = {isa = PBXBuildFile; fileRef = SC220002SC220002SC220002 /* SpeechCoach.swift */; };
 		00395EA0963995166F977DAE /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E093634AFDD74AE6550B454 /* SettingsViewModel.swift */; };
 		022A502D2AC16DD083595430 /* SettingsStoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50AB454BFD61F4F8706F1215 /* SettingsStoring.swift */; };
 		0488E7DF6609BE3FC28538CB /* BodyPoseSample.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BB337AB556F14CF85D511CE /* BodyPoseSample.swift */; };
@@ -182,6 +183,7 @@
 		CC200001CC200001CC200001 /* CoreMLFormClassifier.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CoreMLFormClassifier.swift; path = Services/Sources/VisionMLService/CoreMLFormClassifier.swift; sourceTree = "<group>"; };
 		AC220002AC220002AC220002 /* MyActionClassifier.mlmodel */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file.mlmodel; name = MyActionClassifier.mlmodel; path = VisionMLService/MyActionClassifier.mlmodel; sourceTree = "<group>"; };
 		AC440004AC440004AC440004 /* ActionClassifierService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ActionClassifierService.swift; path = VisionMLService/ActionClassifierService.swift; sourceTree = "<group>"; };
+		SC220002SC220002SC220002 /* SpeechCoach.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpeechCoach.swift; path = ExerciseCameraAnalysisFeature/SpeechCoach.swift; sourceTree = "<group>"; };
 		90CC0541E8DDB23412E0B4C0 /* NetworkError.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NetworkError.swift; path = Networking/NetworkError.swift; sourceTree = "<group>"; };
 		91A17EE42E524B98B805DEE6 /* WorkoutSessionStoring.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WorkoutSessionStoring.swift; path = Interfaces/WorkoutSessionStoring.swift; sourceTree = "<group>"; };
 		91FF1A40FF76415D835C2840 /* DetectedExercise.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DetectedExercise.swift; path = Domain/DetectedExercise.swift; sourceTree = "<group>"; };
@@ -345,6 +347,7 @@
 				76A0B1C2D3E4F5061728394A /* CameraCaptureController.swift */,
 				76A0B1C2D3E4F5061728394B /* CameraPreviewView.swift */,
 				DD200001DD200001DD200001 /* SkeletonOverlayView.swift */,
+				SC220002SC220002SC220002 /* SpeechCoach.swift */,
 				EA2D2D5101E7DEDB2DBB126D /* ExerciseCameraAnalysisView.swift */,
 				B6C98CF6254C35A29475FD15 /* ExerciseCameraAnalysisViewModel.swift */,
 				FF2F32114223489E91C7F96C /* CoachChatView.swift */,
@@ -606,6 +609,7 @@
 				2320FB5BD2F85F14972E47EC /* DashboardViewModel.swift in Sources */,
 				66A0B1C2D3E4F5061728394A /* CameraCaptureController.swift in Sources */,
 				66A0B1C2D3E4F5061728394B /* CameraPreviewView.swift in Sources */,
+				SC110001SC110001SC110001 /* SpeechCoach.swift in Sources */,
 				DD100001DD100001DD100001 /* SkeletonOverlayView.swift in Sources */,
 				665EE422517F01B6BC27DE97 /* ExerciseCameraAnalysisView.swift in Sources */,
 				F4CF5D49F835EC9BA30B4CE0 /* ExerciseCameraAnalysisViewModel.swift in Sources */,

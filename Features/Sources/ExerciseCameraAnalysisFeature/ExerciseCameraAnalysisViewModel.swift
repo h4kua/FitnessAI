@@ -5,6 +5,9 @@ import CoreVideo
 #if canImport(Core)
 import Core
 #endif
+#if canImport(AVFoundation)
+import AVFoundation
+#endif
 import Foundation
 
 @MainActor
@@ -18,6 +21,8 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
     @Published public private(set) var dailyReps: [DetectedExercise: Int] = [:]
     @Published public private(set) var isSavingSession = false
     @Published public private(set) var sessionSavedMessage: String? = nil
+    /// Whether real-time voice coaching is enabled. User can toggle in-session.
+    @Published public var voiceGuidanceEnabled: Bool = true
     /// Elapsed seconds since the camera/session was started.
     @Published public private(set) var sessionElapsedSeconds: Int = 0
 
@@ -36,6 +41,15 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
     private let exerciseAnalysisProvider: any ExerciseAnalysisProviding
     private let workoutSessionStore: (any WorkoutSessionStoring)?
     private var repTracker = RepTracker()
+
+    // MARK: - Voice coaching
+#if canImport(AVFoundation)
+    private let speechCoach = SpeechCoach()
+#endif
+    /// Last text spoken aloud — used to avoid repeating the same message.
+    private var lastSpokenText: String = ""
+    /// Timestamp of the last speech event — used for cooldown enforcement.
+    private var lastSpeechDate: Date = .distantPast
     private var sessionStartedAt: Date? = nil
     private var timerCancellable: AnyCancellable?
 
@@ -47,17 +61,28 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
         self.workoutSessionStore = workoutSessionStore
         // Reset daily reps if the date has rolled over since last launch
         resetDailyRepsIfNeeded()
+        repCount = dailyReps[selectedExercise] ?? 0
     }
 
     public func selectExercise(_ exercise: DetectedExercise) {
         selectedExercise = exercise
-        repCount = 0
+        repCount = dailyReps[exercise] ?? 0
         repTracker = RepTracker()
     }
 
     public func resetRepCount() {
+        dailyReps[selectedExercise] = nil
+        persistDailyReps()
         repCount = 0
         repTracker = RepTracker()
+    }
+
+    /// Toggle voice coaching on / off. Immediately stops any ongoing speech when disabling.
+    public func toggleVoiceGuidance() {
+        voiceGuidanceEnabled.toggle()
+#if canImport(AVFoundation)
+        if !voiceGuidanceEnabled { speechCoach.stop() }
+#endif
     }
 
     public func runPreviewAnalysis() async {
@@ -87,22 +112,27 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
         let primaryExercise = dailyReps.max(by: { $0.value < $1.value })?.key ?? selectedExercise
         let durationMinutes = sessionDurationMinutes()
 
-        // Rough calorie estimate: ~0.32 kcal per rep × exercise MET factor
-        let estimatedCalories = Double(totalReps) * 0.32 * Double(primaryExercise.metFactor)
+        let estimatedCalories: Double
+        if primaryExercise == .plank {
+            estimatedCalories = Double(totalReps) / 60.0 * Double(primaryExercise.metFactor) * 1.2
+        } else {
+            // Rough calorie estimate: ~0.32 kcal per rep × exercise MET factor
+            estimatedCalories = Double(totalReps) * 0.32 * Double(primaryExercise.metFactor)
+        }
+        let unit = primaryExercise == .plank ? "sec" : "reps"
 
         let summary = WorkoutSessionSummary(
             date: sessionStartedAt ?? Date(),
-            title: "\(primaryExercise.rawValue) Session — \(totalReps) reps",
+            title: "\(primaryExercise.rawValue) Session — \(totalReps) \(unit)",
             estimatedCalories: estimatedCalories,
             durationMinutes: max(1, durationMinutes)
         )
 
         do {
             try await store.save(summary)
-            sessionSavedMessage = "Workout saved! \(totalReps) reps in \(max(1, durationMinutes)) min."
-            dailyReps = [:]
-            repCount = 0
+            sessionSavedMessage = "Workout saved! \(totalReps) \(unit) in \(max(1, durationMinutes)) min."
             repTracker = RepTracker()
+            repCount = dailyReps[selectedExercise] ?? 0
             sessionStartedAt = nil
             stopSessionTimer()
             sessionElapsedSeconds = 0
@@ -143,6 +173,11 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
         sessionElapsedSeconds = 0
         sessionStartedAt = nil
         cameraMessage = "Start the camera to analyze posture in real time."
+#if canImport(AVFoundation)
+        speechCoach.stop()
+#endif
+        lastSpokenText = ""
+        lastSpeechDate = .distantPast
     }
 
     public func analyze(pixelBuffer: CVPixelBuffer, isFrontCamera: Bool = true) async {
@@ -186,18 +221,89 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
            let rightAnkle = analysis.poseJointPositions["right_ankle"] {
             augmentedAngles["ankle_spread"] = abs(leftAnkle.x - rightAnkle.x)
         }
+        if selectedExercise == .plank {
+            augmentedAngles["plank_stability"] = plankStabilityScore(from: analysis.poseJointPositions)
+        }
+        if selectedExercise == .pushUp {
+            augmentedAngles["pushup_shoulder_y"] = pushUpShoulderY(from: analysis.poseJointPositions) ?? -1
+        }
 
         let previousCount = repTracker.count
-        repTracker.update(exercise: selectedExercise, angles: augmentedAngles)
+        repTracker.update(exercise: selectedExercise, angles: augmentedAngles, capturedAt: Date())
         let newCount = repTracker.count
 
         if newCount > previousCount {
             let added = newCount - previousCount
             dailyReps[selectedExercise] = (dailyReps[selectedExercise] ?? 0) + added
+            persistDailyReps()
+
+            // ── Voice: announce rep completion ────────────────────────────────
+            // Interrupt whatever else might be playing; rep count > form cue.
+            let total = dailyReps[selectedExercise] ?? 0
+            speakVoice("\(total)", highPriority: true)
         }
 
-        repCount = newCount
+        repCount = dailyReps[selectedExercise] ?? 0
         latestAnalysis = analysis
+
+        // ── Voice: speak actionable form cue when it changes ─────────────────
+        // Only for genuine errors (tooShallow / torsoLean / kneeIssue).
+        // Generic "good form" or "standing" cues are shown on screen only.
+        if let feedback = analysis.formFeedback,
+           !analysis.coachingCue.isEmpty,
+           feedback == .tooShallow || feedback == .torsoLean || feedback == .kneeIssue {
+            speakVoice(analysis.coachingCue, highPriority: false)
+        }
+    }
+
+    // MARK: - Voice helpers
+
+    /// Speak `text` subject to debounce rules.
+    /// - `highPriority`: rep counts — always speak, interrupt current speech.
+    /// - normal: form cues — only speak after 4 s cooldown if text changed.
+    private func speakVoice(_ text: String, highPriority: Bool) {
+        guard voiceGuidanceEnabled else { return }
+#if canImport(AVFoundation)
+        let now = Date()
+        let cooldown: TimeInterval = highPriority ? 1.0 : 4.0
+
+        if !highPriority {
+            // Skip if same message was spoken recently
+            if text == lastSpokenText, now.timeIntervalSince(lastSpeechDate) < cooldown { return }
+            // Skip if a rep was just announced (give it 1.5 s of air time)
+            if now.timeIntervalSince(lastSpeechDate) < 1.5, speechCoach.isSpeaking { return }
+        }
+
+        lastSpokenText = text
+        lastSpeechDate = now
+        speechCoach.speak(text)
+#endif
+    }
+
+    private func pushUpShoulderY(from joints: [String: PosePoint]) -> Double? {
+        guard let leftShoulder = joints["left_shoulder"],
+              let rightShoulder = joints["right_shoulder"] else { return nil }
+        return (leftShoulder.y + rightShoulder.y) / 2
+    }
+
+    private func plankStabilityScore(from joints: [String: PosePoint]) -> Double {
+        guard let leftShoulder = joints["left_shoulder"],
+              let rightShoulder = joints["right_shoulder"],
+              let leftHip = joints["left_hip"],
+              let rightHip = joints["right_hip"],
+              let leftAnkle = joints["left_ankle"],
+              let rightAnkle = joints["right_ankle"]
+        else { return 0 }
+
+        let shoulderY = (leftShoulder.y + rightShoulder.y) / 2
+        let hipY = (leftHip.y + rightHip.y) / 2
+        let ankleY = (leftAnkle.y + rightAnkle.y) / 2
+
+        let bodyLow = (shoulderY + hipY) / 2 < 0.62
+        let shoulderHipScore = 1.0 - min(abs(shoulderY - hipY) / 0.16, 1.0)
+        let hipAnkleScore = 1.0 - min(abs(hipY - ankleY) / 0.24, 1.0)
+        let score = shoulderHipScore * 0.65 + hipAnkleScore * 0.35
+        return bodyLow ? score : 0
     }
 
     private func markSessionStart() {
@@ -229,6 +335,7 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
     // MARK: - Daily rep reset at midnight
 
     private static let dateKey = "camera.lastActiveDate"
+    private static let repsKeyPrefix = "camera.dailyReps"
     private static let dayFormatter: DateFormatter = {
         let df = DateFormatter()
         df.dateFormat = "yyyy-MM-dd"
@@ -243,7 +350,38 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
             repCount = 0
             repTracker = RepTracker()
             UserDefaults.standard.set(todayStr, forKey: Self.dateKey)
+            persistDailyReps()
+        } else {
+            loadDailyReps(for: todayStr)
         }
+    }
+
+    private func dailyRepsKey() -> String {
+        dailyRepsKey(for: ExerciseCameraAnalysisViewModel.dayFormatter.string(from: Date()))
+    }
+
+    private func dailyRepsKey(for day: String) -> String {
+        "\(Self.repsKeyPrefix).\(day)"
+    }
+
+    private func loadDailyReps(for day: String) {
+        guard let stored = UserDefaults.standard.dictionary(forKey: dailyRepsKey(for: day)) as? [String: Int] else {
+            dailyReps = [:]
+            return
+        }
+        dailyReps = stored.reduce(into: [:]) { result, item in
+            guard let exercise = DetectedExercise(rawValue: item.key), item.value > 0 else { return }
+            result[exercise] = item.value
+        }
+    }
+
+    private func persistDailyReps() {
+        let encoded = dailyReps.reduce(into: [String: Int]()) { result, item in
+            if item.value > 0 {
+                result[item.key.rawValue] = item.value
+            }
+        }
+        UserDefaults.standard.set(encoded, forKey: dailyRepsKey())
     }
 
     // MARK: - Preview pose samples
@@ -330,6 +468,24 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
                     "right_ankle":    PosePoint(x: 0.60, y: 0.20)
                 ]
             )
+        case .plank:
+            return BodyPoseSample(
+                jointConfidences: standardConfidences(),
+                jointPositions: [
+                    "left_shoulder":  PosePoint(x: 0.32, y: 0.38),
+                    "right_shoulder": PosePoint(x: 0.42, y: 0.38),
+                    "left_elbow":     PosePoint(x: 0.28, y: 0.28),
+                    "right_elbow":    PosePoint(x: 0.38, y: 0.28),
+                    "left_wrist":     PosePoint(x: 0.25, y: 0.22),
+                    "right_wrist":    PosePoint(x: 0.35, y: 0.22),
+                    "left_hip":       PosePoint(x: 0.58, y: 0.36),
+                    "right_hip":      PosePoint(x: 0.68, y: 0.36),
+                    "left_knee":      PosePoint(x: 0.75, y: 0.34),
+                    "right_knee":     PosePoint(x: 0.85, y: 0.34),
+                    "left_ankle":     PosePoint(x: 0.88, y: 0.32),
+                    "right_ankle":    PosePoint(x: 0.96, y: 0.32)
+                ]
+            )
         case .standing, .unknown:
             return BodyPoseSample(
                 jointConfidences: standardConfidences(),
@@ -366,24 +522,31 @@ private struct RepTracker {
 
     var count: Int = 0
     private var phase: Phase = .top
+    private var plankHoldStartedAt: Date?
+    private var plankAccumulatedSeconds: Int = 0
+    private var pushUpHighestShoulderY: Double?
+    private var pushUpLowestShoulderY: Double?
 
-    mutating func update(exercise: DetectedExercise, angles: [String: Double]) {
+    mutating func update(exercise: DetectedExercise, angles: [String: Double], capturedAt: Date = Date()) {
         switch exercise {
-        // Squat: bottom = 110° (thighs ~parallel), top = 150° (almost straight)
+        // Squat: count quicker by accepting a solid partial depth, then full return to standing.
         case .squat:
-            countReps(primaryAngle: averageKnee(angles), bottomThreshold: 110, topThreshold: 150)
-        // Push-up: bottom = 90° (chest low), top = 150° (almost locked out)
+            countReps(primaryAngle: averageKnee(angles), bottomThreshold: 130, topThreshold: 150)
+        // Push-up: iPhone X/Vision often reports a bottom push-up around 100–120°.
         case .pushUp:
-            countReps(primaryAngle: averageElbow(angles), bottomThreshold: 90, topThreshold: 150)
+            countPushUp(elbowAngle: averageElbow(angles), shoulderY: validMetric(angles["pushup_shoulder_y"]))
         // Pull-up: bottom = 110° (arms bent, chin over bar), top = 155° (arms extended)
         case .pullUp:
-            countReps(primaryAngle: averageElbow(angles), bottomThreshold: 110, topThreshold: 155)
-        // Sit-up: bottom = 80° (hip fully compressed), top = 140° (back flat)
+            countReps(primaryAngle: averageElbow(angles), bottomThreshold: 125, topThreshold: 155)
+        // Sit-up: count a clean crunch without requiring a fully compressed hip angle.
         case .sitUp:
-            countReps(primaryAngle: averageHip(angles), bottomThreshold: 80, topThreshold: 140)
-        // Jumping jack: count by ankle spread (hip angle is less reliable here)
+            countReps(primaryAngle: averageHip(angles), bottomThreshold: 115, topThreshold: 150)
+        // Jumping jack: count each open position after feet return close together.
         case .jumpingJack:
-            countReps(primaryAngle: averageAnkleSpread(angles), bottomThreshold: 0.20, topThreshold: 0.08)
+            countJumpingJack(spread: averageAnkleSpread(angles))
+        // Plank is a hold, so count stable seconds instead of reps.
+        case .plank:
+            countPlankHold(stability: angles["plank_stability"], capturedAt: capturedAt)
         default:
             break
         }
@@ -404,6 +567,66 @@ private struct RepTracker {
         default:
             break
         }
+    }
+
+    private mutating func countJumpingJack(spread: Double?) {
+        guard let spread else { return }
+        switch phase {
+        case .top where spread < 0.14:
+            phase = .bottom
+        case .bottom where spread > 0.24:
+            phase = .top
+            count += 1
+        default:
+            break
+        }
+    }
+
+    private mutating func countPushUp(elbowAngle: Double?, shoulderY: Double?) {
+        let countBeforeAngle = count
+        countReps(primaryAngle: elbowAngle, bottomThreshold: 145, topThreshold: 152)
+        if count > countBeforeAngle { return }
+
+        guard let shoulderY else { return }
+
+        pushUpHighestShoulderY = max(pushUpHighestShoulderY ?? shoulderY, shoulderY)
+        pushUpLowestShoulderY = min(pushUpLowestShoulderY ?? shoulderY, shoulderY)
+
+        guard let highest = pushUpHighestShoulderY,
+              let lowest = pushUpLowestShoulderY else { return }
+
+        let range = highest - lowest
+        guard range >= 0.025 else { return }
+
+        let bottomLine = lowest + range * 0.35
+        let topLine = lowest + range * 0.70
+
+        switch phase {
+        case .top where shoulderY <= bottomLine:
+            phase = .bottom
+        case .bottom where shoulderY >= topLine:
+            phase = .top
+            count += 1
+        default:
+            break
+        }
+    }
+
+    private mutating func countPlankHold(stability: Double?, capturedAt: Date) {
+        guard let stability, stability >= 0.55 else {
+            if let started = plankHoldStartedAt {
+                plankAccumulatedSeconds += max(0, Int(capturedAt.timeIntervalSince(started)))
+            }
+            plankHoldStartedAt = nil
+            count = plankAccumulatedSeconds
+            return
+        }
+
+        if plankHoldStartedAt == nil {
+            plankHoldStartedAt = capturedAt
+        }
+        let currentHold = plankHoldStartedAt.map { max(0, Int(capturedAt.timeIntervalSince($0))) } ?? 0
+        count = plankAccumulatedSeconds + currentHold
     }
 
     private func averageKnee(_ angles: [String: Double]) -> Double? {
@@ -429,5 +652,10 @@ private struct RepTracker {
     // a synthetic key injected by the ViewModel's applyAnalysis step.
     private func averageAnkleSpread(_ angles: [String: Double]) -> Double? {
         angles["ankle_spread"]
+    }
+
+    private func validMetric(_ value: Double?) -> Double? {
+        guard let value, value >= 0 else { return nil }
+        return value
     }
 }

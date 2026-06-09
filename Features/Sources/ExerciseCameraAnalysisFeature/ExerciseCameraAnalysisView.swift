@@ -123,7 +123,7 @@ public struct ExerciseCameraAnalysisView: View {
                     Text(viewModel.selectedExercise.rawValue)
                         .font(FitnessTypography.sectionTitle)
                         .foregroundStyle(FitnessTheme.primaryText)
-                    Text("Session reps")
+                    Text(viewModel.selectedExercise == .plank ? "Today hold seconds" : "Today reps")
                         .font(FitnessTypography.caption)
                         .foregroundStyle(FitnessTheme.secondaryText)
                     if let phase = viewModel.currentPhase { phaseBadge(phase) }
@@ -157,7 +157,7 @@ public struct ExerciseCameraAnalysisView: View {
                                 .font(FitnessTypography.caption)
                                 .foregroundStyle(FitnessTheme.secondaryText)
                             Spacer()
-                            Text("\(viewModel.dailyReps[exercise] ?? 0) reps")
+                            Text(summaryValue(for: exercise, count: viewModel.dailyReps[exercise] ?? 0))
                                 .font(FitnessTypography.caption.bold())
                                 .foregroundStyle(FitnessTheme.primaryText)
                         }
@@ -399,6 +399,9 @@ public struct ExerciseCameraAnalysisView: View {
         case .lowConfidence, .bodyNotVisible: return FitnessTheme.secondaryText
         }
     }
+    private func summaryValue(for exercise: DetectedExercise, count: Int) -> String {
+        exercise == .plank ? "\(count) sec" : "\(count) reps"
+    }
     private func statusIcon(for s: ExerciseFormStatus) -> String {
         switch s {
         case .acceptable: return "checkmark.circle"
@@ -485,13 +488,13 @@ private struct FullScreenCameraView: View {
         }
     }
 
-    // MARK: - Top bar  (minimal — just close + timer)
+    // MARK: - Top bar  (close + timer + voice toggle)
     // Exercise picker and camera-flip moved to the bottom panel so they are
     // reachable with the thumb on tall devices like iPhone X.
 
     private var topBar: some View {
         HStack(alignment: .center) {
-            // Close — 44×44 pt tap target (HIG minimum)
+            // ── Close — 44×44 pt tap target (HIG minimum) ──
             Button {
                 dismiss()
             } label: {
@@ -506,7 +509,7 @@ private struct FullScreenCameraView: View {
 
             Spacer()
 
-            // Timer — shown only once session has started
+            // ── Session timer (centre) ──
             if viewModel.sessionElapsedSeconds > 0 {
                 HStack(spacing: 5) {
                     Image(systemName: "timer").font(.caption2)
@@ -520,8 +523,22 @@ private struct FullScreenCameraView: View {
             }
 
             Spacer()
-            // Mirror the width of the close button so the timer stays centred
-            Color.clear.frame(width: 44 + 16, height: 1)
+
+            // ── Voice guidance toggle ──
+            Button {
+                viewModel.toggleVoiceGuidance()
+            } label: {
+                Image(systemName: viewModel.voiceGuidanceEnabled
+                      ? "speaker.wave.2.fill"
+                      : "speaker.slash.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(viewModel.voiceGuidanceEnabled
+                                     ? FitnessTheme.accent : .white.opacity(0.45))
+                    .frame(width: 44, height: 44)
+                    .background(.black.opacity(0.55))
+                    .clipShape(Circle())
+            }
+            .padding(.trailing, 16)
         }
     }
 
@@ -586,7 +603,7 @@ private struct FullScreenCameraView: View {
                         .foregroundStyle(FitnessTheme.accent)
                         .monospacedDigit()
                         .contentTransition(.numericText())
-                    Text("reps")
+                    Text(viewModel.selectedExercise == .plank ? "today sec" : "today reps")
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.6))
                 }
