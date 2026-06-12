@@ -26,6 +26,9 @@ import SwiftUI
 #if canImport(WorkoutRecommendationsFeature)
 import WorkoutRecommendationsFeature
 #endif
+#if canImport(ExerciseTutorialFeature)
+import ExerciseTutorialFeature
+#endif
 
 public struct MainTabView: View {
     let dashboardViewModel: DashboardViewModel
@@ -108,6 +111,12 @@ public struct MainTabView: View {
                     Label("Privacy", systemImage: "lock.shield.fill")
                 }
                 .tag(6)
+
+            ExerciseTutorialView()
+                .tabItem {
+                    Label("Tutorial", systemImage: selectedTab == 7 ? "play.circle.fill" : "play.circle")
+                }
+                .tag(7)
         }
         .tint(FitnessTheme.accent)
         .preferredColorScheme(.dark)

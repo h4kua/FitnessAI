@@ -474,6 +474,10 @@ private struct FullScreenCameraView: View {
             // and interactive controls land in the easy-thumb zone at the bottom.
             VStack(spacing: 0) {
                 topBar.padding(.top, 6)
+                formCorrectionBanner
+                    .padding(.top, 8)
+                    .animation(.spring(response: 0.40, dampingFraction: 0.70),
+                               value: viewModel.latestAnalysis?.formFeedback)
                 Spacer()
                 bottomPanel   // exercise picker + flip camera + controls all here
             }
@@ -485,6 +489,79 @@ private struct FullScreenCameraView: View {
         .onDisappear {
             cameraController.stop()
             viewModel.resetCameraSession()
+        }
+    }
+
+    // MARK: - Form feedback popup
+    // Large centered popup shown below the top bar on actionable form errors.
+    // Label matches the voice output ("Too Shallow", "Torso Lean", "Knee Issue").
+
+    @ViewBuilder
+    private var formCorrectionBanner: some View {
+        if !cameraController.isPaused,
+           let feedback = viewModel.latestAnalysis?.formFeedback,
+           let cue = viewModel.latestAnalysis?.coachingCue {
+            switch feedback {
+            case .tooShallow, .torsoLean, .kneeIssue:
+                // Popup: big label + icon + coaching cue subtitle
+                VStack(spacing: 6) {
+                    HStack(spacing: 10) {
+                        Image(systemName: formIcon(feedback))
+                            .font(.system(size: 26, weight: .bold))
+                            .foregroundStyle(.white)
+                        Text(formPopupLabel(feedback))
+                            .font(.system(size: 26, weight: .black, design: .rounded))
+                            .foregroundStyle(.white)
+                    }
+                    Text(cue)
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.88))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 18)
+                .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(formColor(feedback))
+                )
+                .padding(.horizontal, 20)
+                .shadow(color: formColor(feedback).opacity(0.55), radius: 14, y: 4)
+                .transition(.scale(scale: 0.88).combined(with: .opacity))
+
+            case .bodyNotVisible, .lowConfidence:
+                // Subtle dark pill — user just needs to reposition
+                HStack(spacing: 10) {
+                    Image(systemName: formIcon(feedback))
+                        .font(.title3)
+                        .foregroundStyle(.white.opacity(0.80))
+                        .frame(width: 28)
+                    Text(cue)
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.90))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                }
+                .padding(.horizontal, 18).padding(.vertical, 12)
+                .background(.black.opacity(0.65))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .padding(.horizontal, 20)
+                .transition(.move(edge: .top).combined(with: .opacity))
+
+            case .goodForm:
+                EmptyView()
+            }
+        }
+    }
+
+    /// The short label shown inside the popup — mirrors the voice output.
+    private func formPopupLabel(_ f: ExerciseFormFeedback) -> String {
+        switch f {
+        case .tooShallow: return "Too Shallow"
+        case .torsoLean:  return "Torso Lean"
+        case .kneeIssue:  return "Knee Issue"
+        default:          return formLabel(f)
         }
     }
 

@@ -41,6 +41,10 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
     private let exerciseAnalysisProvider: any ExerciseAnalysisProviding
     private let workoutSessionStore: (any WorkoutSessionStoring)?
     private var repTracker = RepTracker()
+    // Frame-drop guard: if Vision is still processing the previous frame, skip the
+    // incoming one instead of queuing it. This prevents skeleton lag from accumulating
+    // when Vision runs slower than the camera frame rate.
+    private var isVisionBusy = false
 
     // MARK: - Voice coaching
 #if canImport(AVFoundation)
@@ -48,8 +52,12 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
 #endif
     /// Last text spoken aloud — used to avoid repeating the same message.
     private var lastSpokenText: String = ""
-    /// Timestamp of the last speech event — used for cooldown enforcement.
+    /// Timestamp of the last low-priority (form cue) speech event.
     private var lastSpeechDate: Date = .distantPast
+    /// Timestamp of the last high-priority (rep count) speech event.
+    /// Tracked separately so form cues are only blocked briefly after a rep
+    /// announcement, not for the full 4-second low-priority cooldown.
+    private var lastRepSpeechDate: Date = .distantPast
     private var sessionStartedAt: Date? = nil
     private var timerCancellable: AnyCancellable?
 
@@ -178,9 +186,17 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
 #endif
         lastSpokenText = ""
         lastSpeechDate = .distantPast
+        lastRepSpeechDate = .distantPast
     }
 
     public func analyze(pixelBuffer: CVPixelBuffer, isFrontCamera: Bool = true) async {
+        // Drop this frame if Vision is still processing the previous one.
+        // Queuing frames causes the skeleton to lag further and further behind
+        // the live camera feed as the actor's task queue fills up.
+        guard !isVisionBusy else { return }
+        isVisionBusy = true
+        defer { isVisionBusy = false }
+
         do {
             let analysis = try await exerciseAnalysisProvider.analyze(
                 pixelBuffer: pixelBuffer,
@@ -227,9 +243,12 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
         if selectedExercise == .pushUp {
             augmentedAngles["pushup_shoulder_y"] = pushUpShoulderY(from: analysis.poseJointPositions) ?? -1
         }
+        if selectedExercise == .squat {
+            augmentedAngles["squat_torso_lean"] = torsoLean(from: analysis.poseJointPositions) ?? 0
+        }
 
         let previousCount = repTracker.count
-        repTracker.update(exercise: selectedExercise, angles: augmentedAngles, capturedAt: Date())
+        repTracker.update(exercise: selectedExercise, angles: augmentedAngles, capturedAt: Date(), formFeedback: analysis.formFeedback)
         let newCount = repTracker.count
 
         if newCount > previousCount {
@@ -246,33 +265,51 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
         repCount = dailyReps[selectedExercise] ?? 0
         latestAnalysis = analysis
 
-        // ── Voice: speak actionable form cue when it changes ─────────────────
-        // Only for genuine errors (tooShallow / torsoLean / kneeIssue).
-        // Generic "good form" or "standing" cues are shown on screen only.
+        // ── Voice: speak the short feedback label when a form error is detected ─
+        // Says "Too Shallow", "Torso Lean", or "Knee Issue" so the user hears
+        // the exact problem name while reading the matching popup on screen.
         if let feedback = analysis.formFeedback,
-           !analysis.coachingCue.isEmpty,
            feedback == .tooShallow || feedback == .torsoLean || feedback == .kneeIssue {
-            speakVoice(analysis.coachingCue, highPriority: false)
+            speakVoice(voiceLabel(for: feedback), highPriority: false)
         }
     }
 
     // MARK: - Voice helpers
 
+    /// Short label spoken aloud — matches the popup text shown on screen.
+    private func voiceLabel(for feedback: ExerciseFormFeedback) -> String {
+        switch feedback {
+        case .tooShallow: return "Too Shallow"
+        case .torsoLean:  return "Torso Lean"
+        case .kneeIssue:  return "Knee Issue"
+        default:          return ""
+        }
+    }
+
     /// Speak `text` subject to debounce rules.
-    /// - `highPriority`: rep counts — always speak, interrupt current speech.
-    /// - normal: form cues — only speak after 4 s cooldown if text changed.
+    /// - `highPriority` (rep counts): always fires; 1 s dedup so rapid double-counts don't stack.
+    /// - normal (form cues): blocked for 1.5 s after a rep announcement, then deduped 4 s per message.
     private func speakVoice(_ text: String, highPriority: Bool) {
         guard voiceGuidanceEnabled else { return }
 #if canImport(AVFoundation)
         let now = Date()
-        let cooldown: TimeInterval = highPriority ? 1.0 : 4.0
 
-        if !highPriority {
-            // Skip if same message was spoken recently
-            if text == lastSpokenText, now.timeIntervalSince(lastSpeechDate) < cooldown { return }
-            // Skip if a rep was just announced (give it 1.5 s of air time)
-            if now.timeIntervalSince(lastSpeechDate) < 1.5, speechCoach.isSpeaking { return }
+        if highPriority {
+            // Rep count: fire immediately. 1 s dedup prevents the same count from
+            // repeating if the state machine fires twice in quick succession.
+            guard now.timeIntervalSince(lastRepSpeechDate) >= 1.0 else { return }
+            lastRepSpeechDate = now
+            lastSpokenText = text
+            lastSpeechDate = now
+            speechCoach.speak(text)
+            return
         }
+
+        // Form cue (low priority):
+        // 1. Give the rep announcement 1.5 s of clear air before any form cue.
+        guard now.timeIntervalSince(lastRepSpeechDate) >= 1.5 else { return }
+        // 2. Don't repeat the exact same cue within 4 s.
+        guard !(text == lastSpokenText && now.timeIntervalSince(lastSpeechDate) < 4.0) else { return }
 
         lastSpokenText = text
         lastSpeechDate = now
@@ -284,6 +321,22 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
         guard let leftShoulder = joints["left_shoulder"],
               let rightShoulder = joints["right_shoulder"] else { return nil }
         return (leftShoulder.y + rightShoulder.y) / 2
+    }
+
+    private func torsoLean(from joints: [String: PosePoint]) -> Double? {
+        guard let leftShoulder = joints["left_shoulder"],
+              let rightShoulder = joints["right_shoulder"],
+              let leftHip = joints["left_hip"],
+              let rightHip = joints["right_hip"] else { return nil }
+
+        let midShoulderX = (leftShoulder.x + rightShoulder.x) / 2
+        let midShoulderY = (leftShoulder.y + rightShoulder.y) / 2
+        let midHipX = (leftHip.x + rightHip.x) / 2
+        let midHipY = (leftHip.y + rightHip.y) / 2
+        let dx = midShoulderX - midHipX
+        let dy = midShoulderY - midHipY
+        guard abs(dy) > 0.01 else { return 90 }
+        return abs(atan2(abs(dx), abs(dy))) * (180 / .pi)
     }
 
     private func plankStabilityScore(from joints: [String: PosePoint]) -> Double {
@@ -518,7 +571,13 @@ public final class ExerciseCameraAnalysisViewModel: ObservableObject {
 // MARK: - Rep counter state machine
 
 private struct RepTracker {
-    private enum Phase { case top, bottom }
+    // Three-phase squat tracking:
+    //   .top        → standing / fully extended (knee ≥ 150°)
+    //   .descending → knee 100–150° — form checked; tooShallow fires in this range
+    //   .bottom     → knee < 100°   — confirmed deep squat; form still checked
+    //
+    // Other exercises only use .top / .bottom via countReps; .descending is never used for them.
+    private enum Phase { case top, descending, bottom }
 
     var count: Int = 0
     private var phase: Phase = .top
@@ -526,12 +585,24 @@ private struct RepTracker {
     private var plankAccumulatedSeconds: Int = 0
     private var pushUpHighestShoulderY: Double?
     private var pushUpLowestShoulderY: Double?
+    // ── Squat form accumulators ─────────────────────────────────────────────
+    // Set at descent start; NEVER reset mid-squat — any error during the rep disqualifies it.
+    // This directly uses formFeedback which incorporates ML model output (squat_too_shallow,
+    // squat_torse_lean) as well as the rule-based angle checks.
+    private var badFormEverSeen: Bool = false   // true if ANY form error detected this rep
+    private var reachedDepth: Bool = false       // true when knee ≤ 100° (real squat depth)
 
-    mutating func update(exercise: DetectedExercise, angles: [String: Double], capturedAt: Date = Date()) {
+    mutating func update(exercise: DetectedExercise, angles: [String: Double], capturedAt: Date = Date(), formFeedback: ExerciseFormFeedback? = nil) {
         switch exercise {
-        // Squat: count quicker by accepting a solid partial depth, then full return to standing.
+        // Squat: only count reps where form was correct (goodForm) at the bottom.
+        // Too-shallow, torso-lean, and knee-issue squats are tracked for phase state
+        // but do not increment the rep count.
         case .squat:
-            countReps(primaryAngle: averageKnee(angles), bottomThreshold: 130, topThreshold: 150)
+            countSquatRep(
+                primaryAngle: averageKnee(angles),
+                torsoLean: angles["squat_torso_lean"],
+                formFeedback: formFeedback
+            )
         // Push-up: iPhone X/Vision often reports a bottom push-up around 100–120°.
         case .pushUp:
             countPushUp(elbowAngle: averageElbow(angles), shoulderY: validMetric(angles["pushup_shoulder_y"]))
@@ -547,6 +618,65 @@ private struct RepTracker {
         // Plank is a hold, so count stable seconds instead of reps.
         case .plank:
             countPlankHold(stability: angles["plank_stability"], capturedAt: capturedAt)
+        default:
+            break
+        }
+    }
+
+    /// Squat rep counter — only counts reps with correct form AND sufficient depth.
+    ///
+    /// Two conditions must BOTH be true for a rep to count:
+    ///   1. reachedDepth   — knee reached ≤ 100° at some point (thighs near-parallel)
+    ///   2. !badFormEverSeen — no tooShallow / torsoLean / kneeIssue detected at ANY
+    ///                         point during the entire squat cycle
+    ///
+    /// `formFeedback` already incorporates the ML model output (squat_too_shallow,
+    /// squat_torse_lean) so this gate is informed by the trained classifier.
+    ///
+    /// Phase transitions (knee angle):
+    ///   ≥ 150°     .top        — standing; accumulators reset for next rep
+    ///   150–100°   .descending — tooShallow (120–150°) and torsoLean checked here
+    ///   ≤ 100°     .bottom     — depth confirmed; torsoLean / kneeIssue still checked
+    ///   back ≥ 150° from .bottom — rep counted if both conditions pass
+    private mutating func countSquatRep(
+        primaryAngle: Double?,
+        torsoLean: Double?,
+        formFeedback: ExerciseFormFeedback?
+    ) {
+        guard let angle = primaryAngle else { return }
+
+        let isBadForm = formFeedback == .torsoLean
+                     || formFeedback == .kneeIssue
+                     || (torsoLean ?? 0) > 32
+
+        switch phase {
+        case .top where angle < 150:
+            // New descent — reset both accumulators fresh for this rep
+            phase = .descending
+            badFormEverSeen = false
+            reachedDepth = false
+
+        case .descending:
+            // Accumulate any form error — NEVER cleared mid-rep
+            if isBadForm { badFormEverSeen = true }
+
+            if angle <= 100 {
+                reachedDepth = true   // proper squat depth reached
+                phase = .bottom
+            } else if angle > 155 {
+                phase = .top          // stood back up without reaching depth — no count
+            }
+
+        case .bottom:
+            // Still accumulate form errors at depth (torsoLean can appear here)
+            if isBadForm { badFormEverSeen = true }
+
+            if angle > 150 {
+                // Rising to standing — count only if: deep enough AND no form errors
+                if reachedDepth && !badFormEverSeen { count += 1 }
+                phase = .top
+            }
+
         default:
             break
         }

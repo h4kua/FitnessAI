@@ -116,6 +116,8 @@
 		F7A48FAA1FB247D0B59F7ED9 /* WorkoutPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = 678CA9F9EDD143C99ED7AEFB /* WorkoutPlan.swift */; };
 		FA8461BD221945BAB2541E8A /* WorkoutSessionRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAEA87A9AFF64E7D8676C09A /* WorkoutSessionRecord.swift */; };
 		FFF40A5154914711B1E69118 /* SwiftDataWorkoutSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 458A9BA8D5E64D4A9AAA2E21 /* SwiftDataWorkoutSessionStore.swift */; };
+		TU200001TU200001TU200001 /* ExerciseTutorialView.swift in Sources */ = {isa = PBXBuildFile; fileRef = TU100001TU100001TU100001 /* ExerciseTutorialView.swift */; };
+		TU400001TU400001TU400001 /* DataVideo in Resources */ = {isa = PBXBuildFile; fileRef = TU300001TU300001TU300001 /* DataVideo */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -233,6 +235,8 @@
 		FAEA87A9AFF64E7D8676C09A /* WorkoutSessionRecord.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WorkoutSessionRecord.swift; path = Persistence/WorkoutSessionRecord.swift; sourceTree = "<group>"; };
 		FF2F32114223489E91C7F96C /* CoachChatView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CoachChatView.swift; path = AICoachChatFeature/CoachChatView.swift; sourceTree = "<group>"; };
 		FFBDA96C2661DF4AC50B0227 /* SessionAuthenticationService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SessionAuthenticationService.swift; path = AuthenticationService/SessionAuthenticationService.swift; sourceTree = "<group>"; };
+		TU100001TU100001TU100001 /* ExerciseTutorialView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExerciseTutorialView.swift; path = ExerciseTutorialFeature/ExerciseTutorialView.swift; sourceTree = "<group>"; };
+		TU300001TU300001TU300001 /* DataVideo */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DataVideo; path = DataVideo; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -356,6 +360,7 @@
 				5E093634AFDD74AE6550B454 /* SettingsViewModel.swift */,
 				BE3525DDE98FD31004EE76AF /* WorkoutRecommendationsView.swift */,
 				E9E558B989F29203DC09099A /* WorkoutRecommendationsViewModel.swift */,
+				TU100001TU100001TU100001 /* ExerciseTutorialView.swift */,
 			);
 			name = Features;
 			path = Features/Sources;
@@ -373,6 +378,7 @@
 				21DDC2841F5D2FF07B3049CF /* Infrastructure */,
 				F0B1960E6FEE262086C0405F /* Services */,
 				6048054025B3F42CA2D608DD /* Resources */,
+				TU300001TU300001TU300001 /* DataVideo */,
 				58643635FC40B2E5EFB32635 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -556,6 +562,7 @@
 				846D11FA050E8495FF66CBA0 /* PrivacyInfo.xcprivacy in Resources */,
 				4CCD7550E00744689236F903 /* GoogleService-Info.plist in Resources */,
 				AC110001AC110001AC110001 /* MyActionClassifier.mlmodel in Resources */,
+				TU400001TU400001TU400001 /* DataVideo in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -619,6 +626,7 @@
 				00395EA0963995166F977DAE /* SettingsViewModel.swift in Sources */,
 				359C257E9C82A929CB958A5D /* WorkoutRecommendationsView.swift in Sources */,
 				5332B0767EBF933836450DAE /* WorkoutRecommendationsViewModel.swift in Sources */,
+				TU200001TU200001TU200001 /* ExerciseTutorialView.swift in Sources */,
 				1DA32DCD9F1395E8E4748FB2 /* APIConfiguration.swift in Sources */,
 				8CAFE74E362DFB101FBA0F0A /* AppEnvironment.swift in Sources */,
 				564786901C0A503E8D08B141 /* AppLogger.swift in Sources */,
