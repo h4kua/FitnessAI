@@ -715,13 +715,15 @@ public struct AuthenticationView: View {
         Button {
             viewModel.continueAsGuest()
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: 8) {
+                Text("Skip for now")
+                    .font(.callout.weight(.medium))
                 Image(systemName: "arrow.right.circle")
-                    .font(.caption)
-                Text("Skip for now — explore without account")
-                    .font(FitnessTypography.tiny)
+                    .font(.callout)
             }
-            .foregroundStyle(FitnessTheme.secondaryText.opacity(0.6))
+            .foregroundStyle(FitnessTheme.secondaryText.opacity(0.80))
+            .padding(.vertical, 10)
+            .padding(.horizontal, FitnessSpacing.large)
         }
         .disabled(viewModel.loadState == .loading)
     }

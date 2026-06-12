@@ -62,7 +62,7 @@ public struct MainTabView: View {
     // In simulator with --AutoSignIn, open directly on the Coach tab for easy testing.
     @State private var selectedTab: Int = {
         #if targetEnvironment(simulator)
-        return CommandLine.arguments.contains("--AutoSignIn") ? 4 : 0
+        return CommandLine.arguments.contains("--AutoSignIn") ? 3 : 0
         #else
         return 0
         #endif
@@ -76,47 +76,44 @@ public struct MainTabView: View {
                 }
                 .tag(0)
 
-            CalorieTrackingView(viewModel: calorieTrackingViewModel)
-                .tabItem {
-                    Label("Nutrition", systemImage: selectedTab == 1 ? "fork.knife.circle.fill" : "fork.knife")
-                }
-                .tag(1)
-
-            WorkoutRecommendationsView(viewModel: workoutRecommendationsViewModel)
-                .tabItem {
-                    Label("Train", systemImage: selectedTab == 2 ? "figure.run.circle.fill" : "figure.run")
-                }
-                .tag(2)
+            MyPlanView(
+                workoutViewModel: workoutRecommendationsViewModel,
+                nutritionViewModel: calorieTrackingViewModel
+            )
+            .tabItem {
+                Label("Plan", systemImage: selectedTab == 1 ? "list.bullet.clipboard.fill" : "list.bullet.clipboard")
+            }
+            .tag(1)
 
             ExerciseCameraAnalysisView(viewModel: exerciseCameraAnalysisViewModel)
                 .tabItem {
                     Label("Form", systemImage: "camera.viewfinder")
                 }
-                .tag(3)
+                .tag(2)
 
             CoachChatView(viewModel: coachChatViewModel)
                 .tabItem {
-                    Label("Coach", systemImage: selectedTab == 4 ? "brain.head.profile" : "brain")
+                    Label("Coach", systemImage: selectedTab == 3 ? "brain.head.profile" : "brain")
                 }
-                .tag(4)
+                .tag(3)
 
             SettingsView(viewModel: settingsViewModel)
                 .tabItem {
-                    Label("Profile", systemImage: selectedTab == 5 ? "person.circle.fill" : "person.circle")
+                    Label("Profile", systemImage: selectedTab == 4 ? "person.circle.fill" : "person.circle")
                 }
-                .tag(5)
+                .tag(4)
 
             AnalyticsView(viewModel: analyticsViewModel)
                 .tabItem {
                     Label("Privacy", systemImage: "lock.shield.fill")
                 }
-                .tag(6)
+                .tag(5)
 
             ExerciseTutorialView()
                 .tabItem {
-                    Label("Tutorial", systemImage: selectedTab == 7 ? "play.circle.fill" : "play.circle")
+                    Label("Tutorial", systemImage: selectedTab == 6 ? "play.circle.fill" : "play.circle")
                 }
-                .tag(7)
+                .tag(6)
         }
         .tint(FitnessTheme.accent)
         .preferredColorScheme(.dark)
@@ -126,5 +123,35 @@ public struct MainTabView: View {
         )) {
             OnboardingView()
         }
+    }
+}
+
+// MARK: - Combined Training + Nutrition tab
+
+private struct MyPlanView: View {
+    let workoutViewModel: WorkoutRecommendationsViewModel
+    let nutritionViewModel: CalorieTrackingViewModel
+    @State private var selectedSection = 0
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $selectedSection) {
+                Text("Training").tag(0)
+                Text("Nutrition").tag(1)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, FitnessSpacing.large)
+            .padding(.top, FitnessSpacing.medium)
+            .padding(.bottom, FitnessSpacing.small)
+            .background(FitnessTheme.background)
+
+            if selectedSection == 0 {
+                WorkoutRecommendationsView(viewModel: workoutViewModel)
+            } else {
+                CalorieTrackingView(viewModel: nutritionViewModel)
+            }
+        }
+        .background(FitnessTheme.background.ignoresSafeArea())
+        .animation(.easeInOut(duration: 0.2), value: selectedSection)
     }
 }

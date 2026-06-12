@@ -127,11 +127,11 @@ public struct ExerciseTutorialView: View {
                     .font(FitnessTypography.tiny)
                     .foregroundStyle(.black.opacity(0.60))
                     .tracking(1)
-                Text("Teknik Latihan\nyang Benar")
+                Text("Exercise\nTechniques")
                     .font(.system(size: 26, weight: .black, design: .rounded))
                     .foregroundStyle(.black.opacity(0.90))
                 let totalVideos = TutorialCategory.all.reduce(0) { $0 + $1.exercises.count * 2 }
-                Text("\(totalVideos) video · \(TutorialCategory.all.count) kategori")
+                Text("\(totalVideos) videos · \(TutorialCategory.all.count) categories")
                     .font(FitnessTypography.caption)
                     .foregroundStyle(.black.opacity(0.60))
             }
@@ -167,7 +167,7 @@ public struct ExerciseTutorialView: View {
                 Text(category.name)
                     .font(FitnessTypography.subtitle)
                     .foregroundStyle(FitnessTheme.primaryText)
-                Text("\(category.exercises.count) variasi")
+                Text("\(category.exercises.count) variations")
                     .font(FitnessTypography.caption)
                     .foregroundStyle(FitnessTheme.secondaryText)
             }
@@ -279,7 +279,7 @@ struct TutorialVideoPlayerView: View {
                     Image(systemName: "video.slash.fill")
                         .font(.system(size: 44))
                         .foregroundStyle(FitnessTheme.tertiaryText)
-                    Text("Video tidak tersedia")
+                    Text("Video unavailable")
                         .font(FitnessTypography.body)
                         .foregroundStyle(FitnessTheme.secondaryText)
                 }
@@ -300,9 +300,9 @@ struct TutorialVideoPlayerView: View {
                         .foregroundStyle(FitnessTheme.secondaryText)
                 }
 
-                Picker("Sudut Kamera", selection: $showSide) {
-                    Text("Tampak Depan").tag(false)
-                    Text("Tampak Samping").tag(true)
+                Picker("Camera Angle", selection: $showSide) {
+                    Text("Front View").tag(false)
+                    Text("Side View").tag(true)
                 }
                 .pickerStyle(.segmented)
 
@@ -310,7 +310,7 @@ struct TutorialVideoPlayerView: View {
                     Label("Tips", systemImage: "lightbulb.fill")
                         .font(FitnessTypography.cardTitle)
                         .foregroundStyle(FitnessTheme.caution)
-                    Text("Perhatikan posisi tubuh dari tampak depan dan samping untuk memastikan teknik gerakan yang benar dan aman.")
+                    Text("Watch your body position from both front and side angles to ensure correct and safe movement technique.")
                         .font(FitnessTypography.body)
                         .foregroundStyle(FitnessTheme.secondaryText)
                 }
